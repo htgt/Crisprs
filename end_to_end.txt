@@ -1,0 +1,91 @@
+Couldn't find hs37d5  (or ) NC_007605 on scaffold or chromosome or supercontig
+
+TRYING:
+/software/solexa/bin/bwa aln -n 6 -o 0 -l 20 -k 5 -N
+
+^^^ seems to allow mismatch in the 20th position. will try with 21
+
+PAIRED CRISPRS
+
+bsub -o ar_align.out -e ar_align.err -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa aln -n 5 -o 0 -l 16 -k 5 -N -R 100 /lustre/scratch105/vrpipe/refs/mouse/GRCm38/GRCm38_68.fa /nfs/users/nfs_a/ah19/work/paired_crisprs/ar_crisprs.fq > ar_with_n_output.sai'
+
+/software/solexa/bin/bwa samse -n 20000 /lustre/scratch105/vrpipe/refs/mouse/GRCm38/GRCm38_68.fa ar_align.out /nfs/users/nfs_a/ah19/work/paired_crisprs/crisprs.fq > output.sam
+
+OR
+
+bsub -o ar_align.sam -e ar_align_samse.err -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" "/software/solexa/bin/bwa samse -n 20000 /lustre/scratch105/vrpipe/refs/mouse/GRCm38/GRCm38_68.fa ar_align.out /nfs/users/nfs_a/ah19/work/paired_crisprs/crisprs.fq"
+
+/software/solexa/bin/aligners/bwa/current/xa2multi.pl output.sam > output_multi.sam
+/software/solexa/bin/samtools view -bS output_multi.sam > output_multi.bam
+/software/solexa/bin/samtools sort output_multi.bam output_multi.sorted
+~vvi/chipseq/BEDTools-Version-2.11.2/bin/bamToBed -i output_multi.sorted.bam > output_multi.bed
+
+nearby things:
+cat output_multi.bed | grep ARA > ar-a.bed
+/nfs/users/nfs_v/vvi/chipseq/BEDTools-Version-2.11.2/bin/windowBed -a ar-a.bed -b ar-b.bed -w 30
+
+piped:
+
+/software/solexa/bin/aligners/bwa/current/xa2multi.pl ar_align.sam | /software/solexa/bin/samtools view -bS - | /software/solexa/bin/samtools sort - ar_align.sorted
+~vvi/chipseq/BEDTools-Version-2.11.2/bin/bamToBed -i ar_align.sorted.bam > ar_align.bed
+
+#
+#new stuff
+#
+EXTRACT FASTA INFO (naming goes):
+
+bsub -o ar_fasta.out -e ar_fasta.err -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" 'fastaFromBed -tab -fi /lustre/scratch105/vrpipe/refs/mouse/GRCm38/GRCm38_68.fa -bed ar_with_n_output_21.sorted.bed -fo ar_with_n_with_seqs_21.bed'
+
+perl ~/work/paired_crisprs/merge_fasta.pl ar_with_n_output_21.sorted.bed ar_with_n_with_seqs_21.bed > ar_with_n_and_seqs_21.bed
+
+perl ~/work/paired_crisprs/remove_invalid_crisprs.pl ~/work/paired_crisprs/ar_crisprs.fq ar_with_n_and_seqs_21.bed > ar_with_n_valid_21.bed
+
+perl ~/work/paired_crisprs/split_bed.pl ar_with_n_valid_21.bed
+
+#
+#
+#
+
+#filter specific alignments to its own bed file
+grep ARA ar_align.bed > ar-a.bed
+
+#get the seqs for each bed (via ensembl, not bedToFasta as the farm was broken.)
+#and remove any without a valid pam. needs to know the pam site to be able to do that obviously.
+#there's also bed_to_fasta.pl which takes a bed and makes a bed file with seqs
+perl remove_invalid_crisprs.pl ar-a.bed > ar-a_valid_with_seqs.bed
+
+#use windowBed to get all seqs nearby, use awk to strip any that are the same entry,
+#then pipe those into valid_pairs which will naturally output only the pairs in the right orientation.
+#to do that it needs to know the pams of the seqs youre searching for, so you may have to edit the hash
+windowBed -a ar-b_fixed_seqs.bed -b ar-b_fixed_seqs.bed -w 99999999999 | awk '!($2==$8 && $1==$7)' | perl valid_pairs.pl > ar-b_ar-b_valid.bed
+
+Description:
+
+Using the 'aln' function of short read aligner BWA (Li H and Durbin R, 2010) with settings for a 23bp crispr and 5 mismatches: 
+
+bwa aln -n 5 -o 0 -l 16 -k 5 -N -R 100 <genome.fa> <crisprs.fq>
+
+The options:
+-n 5   The number of mismatches allowed in the seed
+-l 23  The length of the seed (same length as a crispr, i.e. don't use a seed)
+-o 0   Disable gapped alignments by setting maximum allowed gaps to 0
+-k 5   Number of mismatches allowed over the entire sequence
+-N     Disable iterative search to make sure all hits are found
+
+The aligner mode of BWA produces a binary file, so to create a sam file run 'bwa samse -n 20000 <genome.fa> <output_from_aln.sai> <crisps.fq>' where n is the maximum number of alternative alignments (i.e. off-targets) to write into the sam file. The sam file produced only has a single entry per search sequence with any additional matches stored in the XA tag. Provided in BWA is xa2multi.pl which puts a each alignment onto its own line. Combined with SAMTools we can create a bed file for easier processing:
+xa2multi.pl ar_align.sam | samtools view -bS - | /samtools sort - <output.sorted>
+bamToBed -i <output.sorted.bam> > <output.bed>
+
+To use BEDTools the bed file needs to be split into multiple files, with each file containing all entries for a single gene (this can be done easily with grep).
+
+Finally:
+windowBed -a ar-a.bed -b ar-a.bed -w 31
+
+BWA citation:
+Li H and Durbin R, 2010. Fast and accurate long-read alignment with Burrows-Wheeler Transform. Bioinformatics, Epub. [PMID: 20080505]
+
+SAMTools citation:
+Li H.*, Handsaker B.*, Wysoker A., Fennell T., Ruan J., Homer N., Marth G., Abecasis G., Durbin R. and 1000 Genome Project Data Processing Subgroup, 2009. The Sequence alignment/map (SAM) format and SAMtools. Bioinformatics, 25, 2078-9. [PMID: 19505943]
+
+BEDTools citation:
+Quinlan AR and Hall IM, 2010. BEDTools: a flexible suite of utilities for comparing genomic features. Bioinformatics. 26, 6, pp. 841–842.
