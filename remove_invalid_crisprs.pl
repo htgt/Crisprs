@@ -3,78 +3,46 @@
 use strict;
 use warnings;
 
+use Getopt::Long;
+use Pod::Usage;
+
 use LIMS2::Util::EnsEMBL;
 use Bio::Perl;
 use Try::Tiny;
 use Data::Dumper;
+use JSON;
+use YAML::Any qw( DumpFile LoadFile );
 
-my $e = LIMS2::Util::EnsEMBL->new( species => "mouse" );
-
-sub hamming_distance {
-    #use string xor to get the number of mismatches between the two strings.
-    #tr returns the number of changes it made, i.e. the number of letters that are different
-    die "Strings passed to hamming distance differ" if length($_[0]) != length($_[1]);
-    return (uc($_[0]) ^ uc($_[1])) =~ tr/\001-\255//;
-}
-
-#build a hash of all the crisprs so we can check hamming distances to be sure of orientation
-
-die "Usage: remove_invalid_crisprs.pl <crisprs.fq> <bed_file.bed>" unless defined $ARGV[1];
-
-#first file should be crisprs.fq, second the bed file
-my $fq_file = shift;
-open(my $fq_fh, "<", $fq_file) or die "Couldn't open $fq_file: $!";
-
-my ( %crisprs, $current );
-while ( my $line = <$fq_fh> ) {
-    chomp $line;
-
-    if ( $line =~ /^@(.*)/ ) {
-        $current = $1;
-    }
-    else {
-        die "Error: there must only be one sequence per entry" if defined $crisprs{ $current };
-        #die "Crisprs should be reverse complemented!" unless $line =~ /^CC/;
-        die "Crisprs shouldn't be reverse complemented!" unless $line =~ /GG$/;
-
-        #add fwd and reverse so we can compute hamming distances later.
-        #we call it rev as we assume all crispr sequences have been reverse complemented.
-        #cant automatically determine which is which cause CC-GG is a valid crispr
-        $crisprs{$current} = { rev => revcom( $line )->seq, fwd => $line };
-    }
-}
-
+my ( $species, $crispr_fq_file, $crispr_yaml_file, $bed_file );
 my $MAX_EDIT_DISTANCE = 6;
 
+GetOptions(
+    "help"                => sub { pod2usage( 1 ) },
+    "man"                 => sub { pod2usage( 2 ) },
+    "species=s"           => \$species,
+    "fq-file=s"           => \$crispr_fq_file,
+    "crispr-yaml-file=s"  => \$crispr_yaml_file,
+    "bed-file=s"          => \$bed_file,
+    'max-edit-distance=i' => \$MAX_EDIT_DISTANCE,
+) or pod2usage( 2 );
 
+#basically everything is required
+die pod2usage( 2 ) unless $species and $crispr_yaml_file and $crispr_fq_file and $bed_file;
 
-# die Dumper(%seqs);
+my $e = LIMS2::Util::EnsEMBL->new( species => $species );
 
-# my %pams = (
-#     "ARA"   => { pam => "CCA", revpam => "TGG" },
-#     "ARB"   => { pam => "CCT", revpam => "AGG" },
-#     "RAG11" => { pam => "CCA", revpam => "TGG" },
-#     "RAG12" => { pam => "CCG", revpam => "CGG" },
-#     "RAG1C" => { pam => "CCA", revpam => "TGG" },
-#     "RAG1E" => { pam => "CCA", revpam => "TGG" },
-#     "RAG1F" => { pam => "CCA", revpam => "TGG" },
-#     "RAG1G" => { pam => "CCT", revpam => "AGG" },
-# );
+#build a hash of all the crisprs so we can check hamming distances to be sure of orientation
+my %crisprs;
+parse_fq_file( \%crisprs );
 
-#take 2nd element as the pam (NGG), first is the bed file
-#my $pam = pop @ARGV;
-#my $revpam = revcom( $pam )->seq;
+#we store all the hamming distances so we can create a summary later.
+#we also count the number of lines that have N sequence so we can say how many were thrown away
+my ( $num_n_lines, %hd_data );
 
-my @n_lines;
-
-#print STDERR "Checking for $pam or $revpam\n";
-
-while ( my $line = <> ) {
+open(my $bed_fh, "<", $bed_file) or die "Couldn't open $bed_file: $!";
+while ( my $line = <$bed_fh> ) {
     chomp $line;
-    #start is one too low so we +1 to it in every fetch_by_region
     my ( $chr, $start, $end, $name, $unknown, $strand ) = split /\s+/, $line;
-
-    #die "No pam sites available for $name" unless exists $pams{$name};
 
     my $seq;
     if ( $name =~ /(.+)-([CTAGNctagn]{23})/ ) {
@@ -84,41 +52,49 @@ while ( my $line = <> ) {
     }
     else {
         print STDERR "$name has no seq in it, fetching from ensembl\n";
-        $seq = fetch_ensembl_seq($chr, $start, $end);
+        $seq = fetch_ensembl_seq( $chr, $start, $end );
     }
 
+    die "No pam sites available for $name" unless exists $crisprs{$name};
 
+    #skip all N sequences. we get a lot because bwa replace Ns in genome with random sequences
     if ( $seq =~ /N+/ ) {
-        push @n_lines, "$line\t$seq\n";
+        #push @n_lines, "$line\t$seq\n";
+        $num_n_lines++;
         next;
     }
 
-    #skip all the N sequences
-    #next if $seq =~ /N+/;
+    #forward and reverse hamming distances so we don't have to keep computing them
+    my $rev_hd = hamming_distance( $seq, $crisprs{$name}->{rev} ); 
+    my $fwd_hd = hamming_distance( $seq, $crisprs{$name}->{fwd} );
 
-    #if ( $seq !~ /^$revpam|$pam$/ ) {
-    #    print "$seq didn't match $revpam or $pam\n";
-    #}
-    #else {
-    #    print "$seq matches $revpam or $pam\n";
-    #}
-
-    #used the right way around here, unlike in the valid_pairs file. CONFUSING.
-    #my ( $pam, $revpam ) = ( $pams{$name}->{revpam}, $pams{$name}->{pam} );
+    #names are in the format ENSE00003489858_7B. make sure the name matches or everything would break
+    my ( $exon_id, $crispr_id ) = split '_', $name;
+    die "fq header $name is not in the format EXONID_CRISPRID" unless $exon_id and $crispr_id;
 
     #we're assuming reverse complemented pam, so we know orientation
     #check hamming distance to make sure the orientation is as we expect
 
+    #
+    # mismatch in the pam gets counted here. how can we get rid of it? 
+    # will have to check N bp, if its a mismatch then $hd--
+    # we also count the match that is the original location, so there's always 1 0mm entry
+    #
+
     #we have to allow 6 mismatches total, as we don't count the N in the pam as a mismatch
     my $valid = 0;
-    if ( $seq =~ /^CC/i && hamming_distance( $seq, $crisprs{$name}->{rev} ) <= $MAX_EDIT_DISTANCE ) {
+    if ( $seq =~ /^CC/i && $rev_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
+
+        $hd_data{$exon_id}->{$crispr_id}{off_targets}{$rev_hd}++;
     }
-    elsif ( $seq =~ /GG$/i && hamming_distance( $seq, $crisprs{$name}->{fwd} ) <= $MAX_EDIT_DISTANCE ) {
+    elsif ( $seq =~ /GG$/i && $fwd_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
+
+        #we have to do this for both just in case
+        $hd_data{$exon_id}->{$crispr_id}{off_targets}{$fwd_hd}++;
     }
 
-    #if ( $seq =~ /^$revpam|$pam$/ ) {
     if ( $valid ) {
         print STDERR "$seq looks like it has a valid pam\n";
 
@@ -126,17 +102,66 @@ while ( my $line = <> ) {
         print "$chr\t$start\t$end\t$name-$seq\t$unknown\t$strand\n";
     }
     else {
-        print STDERR "Skipping $seq: invalid crispr.";
-        print STDERR " Hamming distances:" . hamming_distance( $seq, $crisprs{$name}->{rev} ) . ","
-                    . hamming_distance( $seq, $crisprs{$name}->{fwd} ) . "\n";
+        print STDERR "Skipping $seq: invalid pam site.\n";
+        #print STDERR " Hamming distances: ${rev_hd}, ${fwd_hd}\n";
     }
-
-    #print $line if $seq =~ /^$revpam|$pam$/
-    #die;
 }
 
-print STDERR "Skipped a total of " . scalar(@n_lines) . " N sequences:\n";
+write_yaml_file();
+
+print STDERR "Skipped a total of $num_n_lines N sequences:\n";
 #print STDERR "$_\n" for @n_lines;
+
+sub hamming_distance {
+    #use string xor to get the number of mismatches between the two strings.
+    #tr returns the number of changes it made, i.e. the number of letters that are different
+    die "Strings passed to hamming distance differ" if length($_[0]) != length($_[1]);
+    return (uc($_[0]) ^ uc($_[1])) =~ tr/\001-\255//;
+}
+
+sub write_yaml_file {
+    #open the fq file (might need to use getopt to set $yaml_file)
+    my $crisprs = LoadFile( $crispr_yaml_file );
+
+    #create a json string of our mismatch data and add it to the crispr yaml
+    for my $exon_id ( keys %hd_data ) {
+        die "$exon_id isn't in $crispr_yaml_file file!" unless defined $crisprs->{$exon_id};
+        for my $crispr_id ( keys %{ $hd_data{$exon_id} } ) {
+            die "$crispr_id ($exon_id) isn't in $crispr_yaml_file!" unless defined $crisprs->{$exon_id}{$crispr_id};
+            
+            $crisprs->{$exon_id}{$crispr_id}{off_targets} = to_json( $hd_data{$exon_id}->{$crispr_id} );
+        }
+    }
+
+    #write the yaml back out with the new off target information
+    DumpFile( $crispr_yaml_file, $crisprs );
+}
+
+#this method takes a hashref and populates it with the fq data
+sub parse_fq_file {
+    my ( $crisprs ) = @_;
+
+    open(my $fq_fh, "<", $crispr_fq_file) or die "Couldn't open $crispr_fq_file: $!";
+
+    #parse the fq file. fq files can have a 3rd line which will break this but we generate them anyway
+    my $current;
+    while ( my $line = <$fq_fh> ) {
+        chomp $line;
+
+        if ( $line =~ /^@(.*)/ ) {
+            $current = $1;
+        }
+        else {
+            die "Error: there must only be one sequence per entry" if defined $crisprs->{ $current };
+            die "Crisprs shouldn't be reverse complemented!" unless $line =~ /GG$/;
+
+            #add fwd and reverse so we can compute hamming distances later.
+            #we call it rev as we assume all crispr sequences have been reverse complemented.
+            #cant automatically determine which is which cause CC-GG is a valid crispr
+            $crisprs->{$current} = { rev => revcom( $line )->seq, fwd => $line };
+        }
+    }
+}
 
 sub fetch_ensembl_seq {
     my ( $chr, $start, $end ) = @_;
@@ -157,6 +182,7 @@ sub fetch_ensembl_seq {
         print STDERR "Error fetching sequence, trying scaffold...\n";
     };
 
+    #gross but whatever it works now and i don't use it anymore thanks to bed2fasta
     unless ( $seq ) {
         #must be scaffold.
         try {
@@ -181,3 +207,51 @@ sub fetch_ensembl_seq {
 
     return $seq;
 }
+
+1;
+
+__END__
+
+=head1 NAME
+
+remove_invalid_crisprs.pl - remove potential off targets that don't have a valid pam site
+
+=head1 SYNOPSIS
+
+remove_invalid_crisprs.pl [options]
+
+    --species            mouse or human
+    --crispr-yaml-file   location of the crispr yaml data created by find_paired_crisprs.pl
+    --fq-file            location of the crispr fq data created by find_paired_crisprs.pl
+    --bed-file           location of bed file containing all potential off targets and their sequence
+    --max-edit-distance  the maximum allowed edit distance for mismatches [optional, default 6]
+    --help               show this dialog
+
+Example usage:
+
+remove_invalid_crisprs.pl --species mouse --fq-file /nfs/users/nfs_a/ah19/work/crisprs/hprt_crisprs.fq --crispr-yaml-file /nfs/users/nfs_a/ah19/work/crisprs/hprt_crisprs.yaml --bed-file /nfs/users/nfs_a/ah19/work/crisprs/HPRT1.with_seqs.bed > HPRT1.valid.bed
+
+A bed file of only the valid crisprs from the source bed file is printed to STDOUT
+
+=head1 DESCRIPTION
+
+Find all possible crispr sites within exon sequences, and any possible pairs within them. 
+The crispr-yaml file is created with the intention of being given to lims2-task to load into the database.
+The fq file is intended to be handed to bwa.
+It will also spit a csv out to stdout if you don't ask for a fq or yaml file
+
+A hash is created of all the crisprs in the fq file in both directions, then every entry
+in the bed file is checked against the sequence to: 
+    1. check the hamming distance is below max-edit-distance
+    2. see if there is a valid PAM site (i.e. does the off-target start CC or end GG)
+
+If both of those conditions are true then it is a valid off-target, so will be printed to stdout
+and the off-target information (i.e. the edit distance) will be stored in the crispr yaml file.
+
+Again see paired_crisprs.sh for how I run this
+
+=head AUTHOR
+
+Alex Hodgkins
+
+=cut

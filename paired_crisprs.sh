@@ -1,5 +1,11 @@
 #!/bin/bash
 
+#
+# TODO:
+#   stop using ah19 paths, make it configurable.
+#   modify split bed to bail if a crispr has more than, say, 8k off targets.
+#
+
 function die () {
     if [ -n "$1" ]; then
         echo -e "$1"
@@ -28,7 +34,10 @@ if [ -z "$1" ]; then
     die "You must specify a species:\n$USAGE"
 fi
 
-case "$1" in 
+SPECIES="$1"
+shift
+
+case "$SPECIES" in 
     [Hh]uman)
         GENOME=/lustre/scratch109/sanger/ah19/genomes/human/ncbi37/Homo_sapiens.NCBI36.48.dna.all.fa
         echo "Using human genome (${GENOME})"
@@ -44,7 +53,7 @@ case "$1" in
         ;;
 esac
 
-if [ -z "$2" ]; then
+if [ -z "$1" ]; then
     die "You must specify at least one exon id\n$USAGE"
 fi
 
@@ -65,16 +74,32 @@ mkdir "$BASE_DIR" || die "Error creating $BASE_DIR"
 cd "$BASE_DIR"
 
 #write the genome and exons and stuff so we know what was run after the fact
-echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nParameters supplied:$@" > info.txt
+echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" > info.txt
 
 #
-#what about UTR? we need to label crisprs identified in the UTR. in the name somewhere so that later 
+# TOMORROW
+#
+# group off target output by mismatches so we can compare directly with zhang stuff. 
+# remove --no-expand-seq
+#
+# important:
+# do migration
+# move code to farm3
+# run on the exons we put in a comment in one of the files,
+# insert crispr data
+#
+# 1: test the new find paired crisprs stuff. is the output correct? does it match hprt1 from before?
+# 
+# 3: how are we gonna put the off targets back in? i guess the same as before with ids
+#
+
+#
+#what about UTR??? we need to label crisprs identified in the UTR. in the name somewhere so that later 
 #it can be easily chosen
 #
-#need to make this into an option in the find_paired_crisprs file, with --fq or something
-#if the first part fails the perl -we still works. all the more reason to add as an option
 echo "Generating paired crisprs"
-perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
+#perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
+perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl --no-expand-seq --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
 
 echo 'Submitting bwa aln step'
 bsub -K -o ${FILESTEM}_align.out -e ${FILESTEM}_align.err -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N '"${GENOME}"' '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sai'
@@ -95,21 +120,33 @@ echo 'Merging sequences'
 perl ~ah19/work/paired_crisprs/merge_fasta.pl ${FILESTEM}.bed ${FILESTEM}.with_seqs.tsv > ${FILESTEM}.with_seqs.bed || die "merge_fasta.pl failed!"
 
 echo 'Removing invalid crisprs'
-perl ~ah19/work/paired_crisprs/remove_invalid_crisprs.pl ${FILESTEM}_crisprs.fq ${FILESTEM}.with_seqs.bed > ${FILESTEM}.valid.bed || die "remove_invalid_crisprs.pl failed!"
+#perl ~ah19/work/paired_crisprs/remove_invalid_crisprs.pl ${FILESTEM}_crisprs.fq ${FILESTEM}.with_seqs.bed > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
+perl ~ah19/work/paired_crisprs/remove_invalid_crisprs.pl --species "${SPECIES}" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --bed-file "${FILESTEM}.with_seqs.bed" > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
 
 echo 'Splitting bed file'
-perl ~ah19/work/paired_crisprs/split_bed.pl ${FILESTEM}.valid.bed yes > permutations.txt || die "split_bed.pl failed!"
-
-#modify split bed to bail if a crispr has more than, say, 8k off targets.
+perl ~ah19/work/paired_crisprs/split_bed.pl "${FILESTEM}.valid.bed" yes > permutations.txt || die "split_bed.pl failed!"
 
 #need to get pairs too
-echo "Running windowbed on" `wc -l permutations.txt | awk '{print $1}'` "files"
+echo "Would running windowbed on" `wc -l permutations.txt | awk '{print $1}'` "files"
 
 #run windowbed on all the permutations
-mkdir html || die "couldn't make html file"
-while read a b; do
-    echo "Finding valid pairs for ${a} vs ${b}"
-    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w 99999999999 | awk '!($2==$8 && $1==$7)' | perl ~ah19/work/paired_crisprs/valid_pairs.pl ${FILESTEM}_crisprs.fq > html/${a}_vs_${b}_valid.html
-done < permutations.txt
+#mkdir html || die "couldn't make html file"
+#while read a b; do
+#    echo "Finding valid pairs for ${a} vs ${b}"
+#    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w 99999999999 | awk '!($2==$8 && #$1==$7)' | perl ~ah19/work/paired_crisprs/valid_pairs.pl ${FILESTEM}_crisprs.fq > html/${a}_vs_${b}_valid.html
+#done < permutations.txt
+
+#change permutations to just be the data from pairs.yaml somehow. parse the yaml with perl maybe?
+#are we gonna throw away ones with more than x off-targets?
+#mkdir paired_data || die "Couldn't make paired data folder"
+#WINDOWSIZE=9000
+#while read a b; do
+#    echo "Finding valid pairs for ${a} vs ${b}"
+#    #for each pair check all possible paired off-targets
+#    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" > "paired_data/${a}_vs_${b}.txt"
+#    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${a}.bed" -w "$WINDOWSIZE" >> "paired_data/${a}_vs_${b}.txt"
+#    windowBed -a "${FILESTEM}.valid-${b}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" >> "paired_data/${a}_vs_${b}.txt"
+    #now write some kind of summary to parse each file and find the closest match?
+#done < permutations.txt
 
 echo "Completed successfully."
