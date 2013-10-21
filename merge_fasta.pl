@@ -19,6 +19,35 @@ open( my $seqs_fh, "<", $seqs_file ) or die "Couldn't open $seqs_file: $!";
 while ( my $bed_line = <$bed_fh> ) {
     my $seq_line = <$seqs_fh>;
 
+    my $merged = merge_seqs( $bed_line, $seq_line );
+
+    if ( $merged ) {
+        print $merged;
+    }
+    else {
+        #try once more, because sometimes bwa aligns off the end of the chromosome,
+        #and bed2fasta skips that entry. If the next line matches then we just ignore.
+        #<$bed_fh> will send the next line of the bed file
+        my $next_bed_line = <$bed_fh>;
+        $merged = merge_seqs( $next_bed_line, $seq_line );
+
+        chomp $bed_line; chomp $seq_line;
+
+        if ( $merged ) {
+            print STDERR "WARNING: $seq_line didn't match $bed_line, but the next entry was fine.\n";
+            print $merged;
+
+            #if it worked then we'll just continue as normal
+            next;
+        }
+
+        die "$seq_line doesn't match $bed_line!";
+    }
+}
+
+sub merge_seqs {
+    my ( $bed_line, $seq_line ) = @_;
+
     my ( $location, $seq ) = split /\s+/, $seq_line;
     #the location needs to be further split to match the bed file format 
     my ( $seq_chr, $seq_start, $seq_end ) = $location =~ /(.+):(\d+)-(\d+)/;
@@ -30,11 +59,15 @@ while ( my $bed_line = <$bed_fh> ) {
     if ( $chr eq $seq_chr and $start == $seq_start and $end == $seq_end ) {
         $name .= "-$seq";
 
-        print "$chr\t$start\t$end\t$name\t$unknown\t$strand\n";
+        return "$chr\t$start\t$end\t$name\t$unknown\t$strand\n";
     }
-    else {
-        die "$seq_line doesn't match $bed_line!";
-    }
+    #else {
+    #    chomp $bed_line; chomp $seq_line;
+    #    print STDERR "$bed_line vs $seq_line failed\n";
+    #}
+
+    #return undef if it didn't match.
+    return;
 }
 
 1;

@@ -39,7 +39,7 @@ shift
 
 case "$SPECIES" in 
     [Hh]uman)
-        GENOME=/lustre/scratch109/sanger/ah19/genomes/human/ncbi37/Homo_sapiens.NCBI36.48.dna.all.fa
+        GENOME=/lustre/scratch109/sanger/ah19/genomes/human/GRCh37/Homo_sapiens.GRCh37.dna.all.fa
         echo "Using human genome (${GENOME})"
         ;;
     [Mm]ouse)
@@ -63,14 +63,14 @@ bed_path=$(which bamToBed)
     die "Can't find bamToBed, make sure bedTools is in your path."
  fi
 
-BASE_DIR=/lustre/scratch109/sanger/`whoami`/${FILESTEM}_paired_crisprs
+BASE_DIR=/lustre/scratch109/sanger/`whoami`/gibson/${FILESTEM}_paired_crisprs
 echo "Working dir is $BASE_DIR"
 
 if [ -d "$BASE_DIR" ]; then
     die "$BASE_DIR already exists, aborting"
 fi
 
-mkdir "$BASE_DIR" || die "Error creating $BASE_DIR"
+mkdir -p "$BASE_DIR" || die "Error creating $BASE_DIR"
 cd "$BASE_DIR"
 
 #write the genome and exons and stuff so we know what was run after the fact
@@ -99,7 +99,7 @@ echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" 
 #
 echo "Generating paired crisprs"
 #perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
-perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl --no-expand-seq --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
+perl ~ah19/work/paired_crisprs/find_paired_crisprs.pl --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
 
 echo 'Submitting bwa aln step'
 bsub -K -o ${FILESTEM}_align.out -e ${FILESTEM}_align.err -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N '"${GENOME}"' '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sai'

@@ -72,6 +72,12 @@ while ( my $line = <$bed_fh> ) {
     my ( $exon_id, $crispr_id ) = split '_', $name;
     die "fq header $name is not in the format EXONID_CRISPRID" unless $exon_id and $crispr_id;
 
+    #if we havent looked at this crispr yet create an off targets hash with all the values set to 0,
+    #so that when we take it out of the db no fields are missing.
+    unless ( defined $hd_data{$exon_id}->{$crispr_id} ) {
+        $hd_data{$exon_id}->{$crispr_id}{off_targets} = { map { $_ => 0 } (0 .. 5) };
+    }
+
     #we're assuming reverse complemented pam, so we know orientation
     #check hamming distance to make sure the orientation is as we expect
 
@@ -86,23 +92,39 @@ while ( my $line = <$bed_fh> ) {
     if ( $seq =~ /^CC/i && $rev_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
 
+        #compare the N in the pam sites; if they don't match then the edit distance
+        #is reporting 1 more than we want it to (because mismatch in N doesn't count)
+        if ( $rev_hd > 0 && substr($seq, 2, 1) ne substr($crisprs{$name}->{rev}, 2, 1) ) {
+            #print STDERR "$seq\n" . $crisprs{$name}->{rev} . " has a mismatch in CCN.";
+            $rev_hd--;
+        }
+
         $hd_data{$exon_id}->{$crispr_id}{off_targets}{$rev_hd}++;
     }
     elsif ( $seq =~ /GG$/i && $fwd_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
+
+        #same as above, but the pam site is at the end.
+        if ( $fwd_hd > 0 && substr($seq, 20, 1) ne substr($crisprs{$name}->{fwd}, 20, 1) ) {
+            $fwd_hd--;
+        }
+
+        if ( $fwd_hd > 5 ) {
+            print STDERR "$seq\n" . $crisprs{$name}->{fwd} . " has >5 mismatches??\n";
+        }
 
         #we have to do this for both just in case
         $hd_data{$exon_id}->{$crispr_id}{off_targets}{$fwd_hd}++;
     }
 
     if ( $valid ) {
-        print STDERR "$seq looks like it has a valid pam\n";
+        #print STDERR "$seq looks like it has a valid pam\n";
 
         #print $line; #uncomment this to not put seqs in
         print "$chr\t$start\t$end\t$name-$seq\t$unknown\t$strand\n";
     }
     else {
-        print STDERR "Skipping $seq: invalid pam site.\n";
+        #print STDERR "Skipping $seq: invalid pam site.\n";
         #print STDERR " Hamming distances: ${rev_hd}, ${fwd_hd}\n";
     }
 }
@@ -126,10 +148,16 @@ sub write_yaml_file {
     #create a json string of our mismatch data and add it to the crispr yaml
     for my $exon_id ( keys %hd_data ) {
         die "$exon_id isn't in $crispr_yaml_file file!" unless defined $crisprs->{$exon_id};
-        for my $crispr_id ( keys %{ $hd_data{$exon_id} } ) {
+        while ( my ( $crispr_id, $crispr) = each %{ $hd_data{$exon_id} } ) {
             die "$crispr_id ($exon_id) isn't in $crispr_yaml_file!" unless defined $crisprs->{$exon_id}{$crispr_id};
             
-            $crisprs->{$exon_id}{$crispr_id}{off_targets} = to_json( $hd_data{$exon_id}->{$crispr_id} );
+            #display the off target information like: 0: 20, 1: 50, 2: 300, 3: 900
+            my $ordered = join ", ", map { $_ . ": " . $crispr->{off_targets}{$_} } 
+                                        sort { $a <=> $b } 
+                                            keys %{ $crispr->{off_targets} };
+
+            #make it the same format as before (not valid json, but it should be later)
+            $crisprs->{$exon_id}{$crispr_id}{off_target_summary} = "{" . $ordered . "}";
         }
     }
 

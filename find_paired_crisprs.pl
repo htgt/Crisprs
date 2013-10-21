@@ -19,7 +19,7 @@ my ( $expand_seq, $MIN_SPACER, $MAX_SPACER ) = ( 1, -10, 30 ); #set default valu
 GetOptions(
     "help"               => sub { pod2usage( 1 ) },
     "man"                => sub { pod2usage( 2 ) },
-    "species=s"          => \$species,
+    "species=s"          => sub { my ( $name, $val ) = @_; $species = lc $val; },
     "exon-ids=s{,}"      => \@exon_ids,
     "fq-file=s"          => \$crispr_fq_file,
     "crispr-yaml-file=s" => \$crispr_yaml_file,
@@ -31,18 +31,24 @@ GetOptions(
 
 die pod2usage( 2 ) unless $species and @exon_ids;
 
-my $exon_re;
-if ( $species =~ /mouse/i ) {
-    $exon_re = qr/ENSMUSE/;
-}
-elsif ( $species =~ /human/i ) {
-    $exon_re = qr/ENSE/;
-}
-else {
-    die "Unknown species: $species";
-}
+#select the appropriate exon regex to validate any exon ids we get
+my %exon_regexes = (
+    'mouse' => qr/ENSMUSE/,
+    'human' => qr/ENSE/,
+);
+
+die "Unknown species: $species" unless defined $exon_regexes{ $species };
+my $exon_re = $exon_regexes{ $species };
 
 my $e = LIMS2::Util::EnsEMBL->new( species => $species );
+
+#
+# ok -- fix create_crispr to accept pam_right (and any other model functions)
+#   make a script that works like lims2-task but gets each crispr id and puts it into the yaml
+#   its processing
+# do a migration to change crispr_left and crispr_right to crispr_left_id and crispr_right_id
+# write about why CC-GG crisprs have the same sequence in the db (as its both pam right and pam left)
+#
 
 #
 # exons with gibson designs:
@@ -159,6 +165,7 @@ sub _get_unique_crisprs {
 
             #add it if we don't already have it in the hash
             if( ! defined $unique{$id} ) {
+                $pair->{$crispr}{pam_right} = ( $id =~ /B$/ ) || 0; #set pam_right to true/false
                 $unique{$id} = $pair->{$crispr};
             }
         }
@@ -226,12 +233,17 @@ sub get_matches {
         my $crispr_seq = $1;
 
         my $data = {
-            seq    => $crispr_seq,
-            start  => $slice->start + ((pos $seq) - length( $crispr_seq )), #is this right? i hope so
-            end    => $slice->start + ((pos $seq) - 1), #need to subtract 1 or we get 24bp sequence back
-            chr    => $slice->seq_region_name, #the same for all of them but we need it for the db
-            id     => $id++, #used to identify crisprs to add off targets later
-            #strand => $slice->strand, #this is specified below because it depends on the crispr orientation
+            locus => {
+                #chr_strand => $slice->strand, #this is specified below because it depends on the crispr orientation
+                chr_start => $slice->start + ((pos $seq) - length( $crispr_seq )), #is this right? i hope so
+                chr_end   => $slice->start + ((pos $seq) - 1), #need to subtract 1 or we get 24bp sequence back
+                chr_name  => $slice->seq_region_name, #the same for all of them but we need it for the db
+            },
+            id        => $id++, #used to identify crisprs to add off targets later
+            type      => 'Exonic', #for now -- some might be intronic
+            seq       => $crispr_seq,
+            #species   => $species,
+            off_target_algorithm => 'bwa',
         };
 
         my $type;
@@ -240,13 +252,14 @@ sub get_matches {
         if ( $crispr_seq =~ /^CC.*GG$/ ) {
             #its left AND right. what a joke
             $type = "both ";
+            #note that they still both point to the same locus, because why would you change that??
             my $right_data = { %$data }; #shallow copy data so they can be edited separately 
             $data->{id}       .= "A"; #pretend this is called left_data in this block
             $right_data->{id} .= "B";
 
             #the left crispr (beginning CC) is on the -ve, and the GG is on the +ve
-            $data->{strand} = -1;
-            $right_data->{strand} = 1;
+            $data->{locus}{chr_strand} = -1;
+            $right_data->{locus}{chr_strand} = 1;
 
             push @pam_left, $data;
             push @pam_right, $right_data;
@@ -256,7 +269,7 @@ sub get_matches {
             $data->{id} .= "A";
 
             #its CC so its on the global negative strand (all slices we have are on global +ve)
-            $data->{strand} = -1;
+            $data->{locus}{chr_strand} = -1;
 
             push @pam_left, $data;
         }
@@ -265,7 +278,7 @@ sub get_matches {
             $data->{id} .= "B";
 
             #GG means it is on the global positive strand
-            $data->{strand} = 1;
+            $data->{locus}{chr_strand} = 1;
 
             push @pam_right, $data;
         }
@@ -274,8 +287,8 @@ sub get_matches {
         }
 
         say STDERR "Found $type crispr " . $data->{id} . ": $crispr_seq\@" . $slice->seq_region_name . ":"
-                                                       . $data->{start} . "-" 
-                                                       . $data->{end} . ":"
+                                                       . $data->{locus}{chr_start} . "-" 
+                                                       . $data->{locus}{chr_end} . ":"
                                                        . $slice->strand;
 
         #go back to just after the pam site so we can find overlapping crisprs
@@ -299,7 +312,7 @@ sub get_pairs {
             #
             # NEED TO SET MIN/MAX SPACER
             #
-            my $distance = $r->{ start } - $l->{ end };
+            my $distance = $r->{locus}{ chr_start } - $l->{locus}{ chr_end };
             if ( $distance <= $MAX_SPACER && $distance >= $MIN_SPACER ) {
                 push @pairs, {
                     first_crispr  => $l,
@@ -308,6 +321,11 @@ sub get_pairs {
                     second_crispr => $r,
                 }
             }
+
+            #
+            #TODO: 
+            #   add else statement to keep crisprs that aren't in pairs
+            #
 
             #the lists are in order so if one is already smaller than the min spacer
             #all the remaining ones will be for this crispr
