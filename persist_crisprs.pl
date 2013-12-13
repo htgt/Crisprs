@@ -7,7 +7,7 @@ use Getopt::Long;
 use Pod::Usage;
 
 use LIMS2::Model;
-use YAML::Any qw( LoadFile DumpFile );
+use YAML::Any qw( LoadFile DumpFile Dump );
 use Try::Tiny;
 
 my ( $species, $assembly, @yaml_files );
@@ -26,20 +26,65 @@ die pod2usage( 2 ) unless $species and $assembly and @yaml_files;
 my $model = LIMS2::Model->new( user => 'tasks' );
 
 for my $filename ( @yaml_files ) {
-    die "$filename doesnt exist!" unless -f $filename;
+    unless ( -f $filename ) {
+        print STDERR "$filename doesnt exist, skipping.";
+        next;
+    }
 
-    my $data = LoadFile( $filename ) || die "Couldn't load $filename";
+    my $data = LoadFile( $filename ) || (print "Couldn't load $filename, skippnig" && next);
 
     my $failed = 0;
     
     while ( my ( $exon_id, $crisprs ) = each %{ $data } ) {
         #we don't care about the crispr id so we just get the values
         for my $crispr ( values %{$crisprs} ) {
+            #skip a crispr if it has already been entered (in case some fail and some don't)
+            #next if defined $crispr->{db_id};
+
+            #this is used for an existing crispr we just want to re-calculate OTS for
+            if ( $exon_id eq "ENSExistingCrisprs" ) {
+                print STDERR "Updating OTS instead of creating a new crispr\n";
+
+                try {
+                    $model->txn_do(
+                        sub {
+                            my ( $db_id ) = $crispr->{id} =~ /(\d+)/;
+                            my $db_cr = $model->schema->resultset("Crispr")->find( $db_id );
+
+                            print STDERR "Updating " . $db_cr->id . " with " 
+                                       . $crispr->{off_target_summary} . "\n";
+
+                            $db_cr->off_target_summaries->find( { algorithm => 'bwa' } )->update( {
+                                summary => $crispr->{off_target_summary} 
+                            } );
+
+                            unless ( $commit ) {
+                                $model->txn_rollback;
+                            }
+                        }
+                    );
+                }
+                catch {
+                    print STDERR "$_\n";
+                    $model->txn_rollback;
+                    $failed = 1;
+                };
+
+                next;
+            }
+
+            delete $crispr->{db_id} if defined $crispr->{db_id} and $commit;
+
             my $crispr_id = delete $crispr->{id}; #db doesnt want this
 
             $crispr->{species} = $species;
             $crispr->{locus}{assembly} = $assembly;
             $crispr->{comment} = $crispr_id; #no harm in storing this
+
+            #
+            #TODO make transaction over the whole method, including the writing of the file
+            # - if it fails we want to rollback
+            #
 
             try {
                 $model->txn_do(
@@ -74,7 +119,7 @@ for my $filename ( @yaml_files ) {
         #if it fails print to stduot
         print STDERR "$_\n";
         print STDERR "Couldn't write yaml to $filename, printing to stdout\n";
-        print Dump( $data );
+        #print Dump( $data );
         $failed = 1;
     };
 
@@ -107,15 +152,7 @@ persist_crisprs.pl --species human --assembly GRCh37 --crispr-yaml HPRT1/HPRT1_c
 
 =head1 DESCRIPTION
 
-Find all possible crispr sites within exon sequences, and any possible pairs within them. 
-The crispr-yaml file is created with the intention of being given to lims2-task to load into the database.
-The fq file is intended to be handed to bwa.
-It will also spit a csv out to stdout if you don't ask for a fq or yaml file
-
-See paired_crisprs.sh for how I run this bad boy
-
 Insert all crisprs in the yaml into the database, and write the inserted crispr id back into the yaml file.
-If db_id is already set then the crispr will be skipped
 
 =head AUTHOR
 

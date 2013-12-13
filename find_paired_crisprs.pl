@@ -8,28 +8,39 @@ use feature qw( say );
 use Getopt::Long;
 use Pod::Usage;
 use LIMS2::Util::EnsEMBL;
+use LIMS2::Model;
 use Bio::Perl qw( revcom );
 use YAML::Any qw( DumpFile );
 
 use Data::Dumper;
 
 #should these all be caps? maybe. its really ugly though
-my ( $species, $crispr_fq_file, $crispr_yaml_file, $pair_yaml_file, @exon_ids );
+my ( $species, $crispr_fq_file, $crispr_yaml_file, $pair_txt_file ); 
+my ( $pair_yaml_file, @exon_ids, @regions, @pair_ids, %specific_sites, $pair_gff_file );
 my ( $expand_seq, $MIN_SPACER, $MAX_SPACER ) = ( 1, -10, 30 ); #set default values
 GetOptions(
     "help"               => sub { pod2usage( 1 ) },
     "man"                => sub { pod2usage( 2 ) },
     "species=s"          => sub { my ( $name, $val ) = @_; $species = lc $val; },
     "exon-ids=s{,}"      => \@exon_ids,
+    "regions=s{,}"       => \@regions,
+    "pair-ids=s{,}"    => \@pair_ids,
+    "specific-sites=s{,}" => sub { my ( $name, $val ) = @_; $specific_sites{$val} = 1; },
     "fq-file=s"          => \$crispr_fq_file,
     "crispr-yaml-file=s" => \$crispr_yaml_file,
     "pair-yaml-file=s"   => \$pair_yaml_file,
+    "pair-text-file=s"   => \$pair_txt_file,
+    "pair-gff-file=s"    => \$pair_gff_file,
     "expand-seq!"        => \$expand_seq,
     "min-spacer=i"       => \$MIN_SPACER,
     "max-spacer=i"       => \$MAX_SPACER,
 ) or pod2usage( 2 );
 
-die pod2usage( 2 ) unless $species and @exon_ids;
+die pod2usage( 2 ) unless $species and (@exon_ids or @regions or @pair_ids);
+
+if ( scalar keys %specific_sites ) {
+    say "Specific sites are: " . join ",", keys %specific_sites;
+}
 
 #select the appropriate exon regex to validate any exon ids we get
 my %exon_regexes = (
@@ -39,23 +50,42 @@ my %exon_regexes = (
 
 die "Unknown species: $species" unless defined $exon_regexes{ $species };
 my $exon_re = $exon_regexes{ $species };
+my $region_re = qr/(\d+|X|Y):(\d+)-(\d+)/;
 
 my $e = LIMS2::Util::EnsEMBL->new( species => $species );
-
-#
-# ok -- fix create_crispr to accept pam_right (and any other model functions)
-#   make a script that works like lims2-task but gets each crispr id and puts it into the yaml
-#   its processing
-# do a migration to change crispr_left and crispr_right to crispr_left_id and crispr_right_id
-# write about why CC-GG crisprs have the same sequence in the db (as its both pam right and pam left)
-#
-
-#
-# exons with gibson designs:
-# ENSE00003596810 ENSE00003663376 ENSE00003606976 ENSE00003682156 ENSE00003611316 ENSE00001427230 ENSE00001083354 ENSE00000683019 ENSE00000849850 ENSE00003701380 ENSE00003596529 
-#
-
+my $l = LIMS2::Model->new( user => "lims2" );
 my %pairs_by_exon;
+
+#why arent these functions. this whole file is a mess now and needs to be modularised 
+
+for my $region ( @regions ) {
+    my ( $chr, $start, $end ) = $region =~ $region_re;
+
+    unless ( defined $chr and defined $start and defined $end ) {
+        say STDERR "$region is not a valid region!";
+        next;
+    }
+
+    my $slice = $e->slice_adaptor->fetch_by_region("chromosome", $chr, $start, $end);
+    unless ( $slice ) {
+        say STDERR "Couldn't get slice, skipping $region";
+        next;
+    }
+
+    say STDERR "Region length: " . $slice->length;
+
+    my $base = ( $species eq 'mouse' ) ? 'ENSMUSE9999' : 'ENSE9999';
+    my $int_chr = ( $chr eq 'X' ) ? 22 : ( $chr eq 'Y' ) ? 23 : $chr; #change X/Y to 22/23
+    my $fake_exon_id = $base . $int_chr . $start . $end;
+
+    say STDERR "Fake exon id for $region: $fake_exon_id";
+
+    my $matches = get_matches( $slice );
+    say "Found " . scalar( @$matches ) . " paired crisprs:";
+
+    $pairs_by_exon{ $fake_exon_id } = $matches;
+}
+
 for my $exon_id ( @exon_ids ) {
     if ( $exon_id !~ $exon_re ) {
         say STDERR "$exon_id is not a valid exon for this species!";
@@ -67,6 +97,12 @@ for my $exon_id ( @exon_ids ) {
     #get a slice of just the exon
     my $exon_slice = $e->slice_adaptor->fetch_by_exon_stable_id( $exon_id );
     say STDERR "Exon length: " .$exon_slice->length;
+
+    #enable this if its a huge exon like AR
+    #if ( $exon_slice->length > 400 ) {
+    #    $exon_slice = $exon_slice->expand(0, -1100);
+    #    say STDERR "New exon length: " .$exon_slice->length;
+    #}
 
     #expand the slice if expand_seq is set (it is by default)
     if ( $expand_seq ) {        
@@ -101,9 +137,38 @@ for my $exon_id ( @exon_ids ) {
     $pairs_by_exon{ $exon_id } = $matches;
 }
 
+if ( @pair_ids ) {
+    my @pairs = $l->schema->resultset( "CrisprPair" )->search(
+        { 'me.id' => { -IN => \@pair_ids } },
+        { prefetch => [ "left_crispr", "right_crispr" ] }
+    );
+
+    #emulate the format used by everything else
+    my @matches;
+    for my $pair ( @pairs ) {
+        push @matches, {
+            first_crispr  => { 
+                id    => $pair->left_crispr_id."A", 
+                seq   => $pair->left_crispr->seq, 
+                locus => $pair->left_crispr->loci->first->as_hash, 
+            }, 
+            second_crispr => { 
+                id    => $pair->right_crispr_id."B", 
+                seq   => $pair->right_crispr->seq,
+                locus => $pair->right_crispr->loci->first->as_hash, 
+            }
+        };
+    }
+
+    #ENS needed to conform to regex
+    $pairs_by_exon{ ENSExistingCrisprs } = \@matches;
+}
+
+#this should be a jump table or something
 write_fq( \%pairs_by_exon ) if defined $crispr_fq_file;
 write_crispr_yaml( \%pairs_by_exon ) if defined $crispr_yaml_file;
 write_pair_yaml( \%pairs_by_exon ) if defined $pair_yaml_file;
+write_pair_gff( \%pairs_by_exon ) if defined $pair_gff_file;
 
 #this is how it worked before the fq/yaml option so recreate that
 if ( ! defined $crispr_fq_file && ! defined $crispr_yaml_file ) {
@@ -216,6 +281,58 @@ sub write_pair_yaml {
     YAML::Any::DumpFile( $pair_yaml_file, \%pair_data );
 
     say STDERR "Pair yaml output written to $pair_yaml_file";
+
+    return;
+}
+
+sub write_pair_gff {
+    my ( $pairs_by_exon ) = @_;
+
+    die "pair yaml output file location not defined!" unless defined $pair_gff_file;
+
+    open( my $fh, ">", $pair_gff_file ) || die "Couldn't open $pair_gff_file for writing: $!";
+
+    while ( my ( $exon_id, $pairs ) = each %{ $pairs_by_exon } ) {
+        my $id = 1;
+        for my $pair ( @{ $pairs } ) {
+            for my $crispr ( qw( first_crispr second_crispr ) ) {
+                say $fh join "\t", 'chr'.$pair->{$crispr}{locus}{chr_name},
+                                   'pair_finder',
+                                   'pair',
+                                   $pair->{$crispr}{locus}{chr_start},
+                                   $pair->{$crispr}{locus}{chr_end},
+                                   0,
+                                   '.',
+                                   '.',
+                                   'group' . $id;
+            }
+
+            $id++;
+        }
+    }
+
+    say STDERR "Pair gff output written to $pair_gff_file";
+
+    return;
+}
+
+#we have it as text so it can be processed by paired_crisprs.sh easily
+sub write_pair_txt {
+    my ( $pairs_by_exon ) = @_;
+
+    die "pair yaml output file location not defined!" unless defined $pair_txt_file;
+
+    open(my $fh, "<", $pair_txt_file) || die "Couldn't open $pair_txt_file for reading.";
+
+    #print out 1 pair per line separated by a space.
+    while ( my ( $exon_id, $pairs ) = each %{ $pairs_by_exon } ) {
+        for my $pair ( @{ $pairs } ) {
+            say $fh "${exon_id}_" . $pair->{first_crispr}{id} . " "
+                  . "${exon_id}_" . $pair->{second_crispr}{id};
+        }
+    }
+
+    say STDERR "Pair txt output written to $pair_txt_file";
 }
 
 sub get_matches {
@@ -231,6 +348,12 @@ sub get_matches {
 
     while ( $seq =~ /(CC\S{21}|\S{21}GG)/g ) {
         my $crispr_seq = $1;
+
+        if ( %specific_sites && ! defined $specific_sites{$crispr_seq} ) {
+            say STDERR "Skipping $crispr_seq as it doesn't match specified sites.";
+            pos($seq) -= length( $crispr_seq ) - 1;
+            next;
+        }
 
         my $data = {
             locus => {

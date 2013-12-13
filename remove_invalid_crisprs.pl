@@ -109,9 +109,9 @@ while ( my $line = <$bed_fh> ) {
             $fwd_hd--;
         }
 
-        if ( $fwd_hd > 5 ) {
-            print STDERR "$seq\n" . $crisprs{$name}->{fwd} . " has >5 mismatches??\n";
-        }
+        #if ( $fwd_hd > 5 ) {
+        #    print STDERR "$seq\n" . $crisprs{$name}->{fwd} . " has >5 mismatches??\n";
+        #}
 
         #we have to do this for both just in case
         $hd_data{$exon_id}->{$crispr_id}{off_targets}{$fwd_hd}++;
@@ -143,13 +143,13 @@ sub hamming_distance {
 
 sub write_yaml_file {
     #open the fq file (might need to use getopt to set $yaml_file)
-    my $crisprs = LoadFile( $crispr_yaml_file );
+    my $crisprs = ( -f $crispr_yaml_file ) ? LoadFile( $crispr_yaml_file ) : {};
 
     #create a json string of our mismatch data and add it to the crispr yaml
     for my $exon_id ( keys %hd_data ) {
-        die "$exon_id isn't in $crispr_yaml_file file!" unless defined $crisprs->{$exon_id};
+        #die "$exon_id isn't in $crispr_yaml_file file!" unless defined $crisprs->{$exon_id};
         while ( my ( $crispr_id, $crispr) = each %{ $hd_data{$exon_id} } ) {
-            die "$crispr_id ($exon_id) isn't in $crispr_yaml_file!" unless defined $crisprs->{$exon_id}{$crispr_id};
+            #die "$crispr_id ($exon_id) isn't in $crispr_yaml_file!" unless defined $crisprs->{$exon_id}{$crispr_id};
             
             #display the off target information like: 0: 20, 1: 50, 2: 300, 3: 900
             my $ordered = join ", ", map { $_ . ": " . $crispr->{off_targets}{$_} } 

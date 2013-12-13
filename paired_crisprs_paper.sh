@@ -1,11 +1,5 @@
 #!/bin/bash
 
-#
-# TODO:
-#   stop using ah19 paths, make it configurable.
-#   modify split bed to bail if a crispr has more than, say, 8k off targets.
-#
-
 function die () {
     if [ -n "$1" ]; then
         echo -e "$1"
@@ -41,14 +35,14 @@ shift
 
 case "$SPECIES" in 
     [Hh]uman)
-        GENOME=/lustre/scratch110/sanger/ah19/genomes/human/GRCh37/Homo_sapiens.GRCh37.dna.all.fa
+        GENOME=/lustre/scratch109/sanger/ah19/genomes/human/GRCh37/Homo_sapiens.GRCh37.dna.all.fa
         ASSEMBLY=GRCh37
         echo "Using human genome (${GENOME})"
         ;;
     [Mm]ouse)
         #i can no longer access the vrpipe one, so i've made a dir symlinking to srpipe
         #GENOME=/lustre/scratch105/vrpipe/refs/mouse/GRCm38/GRCm38_68.fa
-        GENOME=/lustre/scratch110/sanger/ah19/genomes/mouse/GRCm38/Mus_musculus.GRCm38.68.dna.toplevel.fa
+        GENOME=/lustre/scratch109/sanger/ah19/genomes/mouse/GRCm38/Mus_musculus.GRCm38.68.dna.toplevel.fa
         ASSEMBLY=GRCm38
         echo "Using mouse genome (${GENOME})"
         ;;
@@ -67,7 +61,7 @@ bed_path=$(which bamToBed)
     die "Can't find bamToBed, make sure bedTools is in your path."
  fi
 
-BASE_DIR=/lustre/scratch110/sanger/`whoami`/gibson/${FILESTEM}_paired_crisprs
+BASE_DIR=/lustre/scratch109/sanger/`whoami`/gibson/${FILESTEM}_paired_crisprs
 echo "Working dir is $BASE_DIR"
 
 if [ -d "$BASE_DIR" ]; then
@@ -81,31 +75,17 @@ cd "$BASE_DIR"
 echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" > info.txt
 
 #
-#what about UTR??? we need to label crisprs identified in the UTR. in the name somewhere so that later 
-#it can be easily chosen
+#change specific sites here
 #
+
 echo "Generating paired crisprs"
-#perl ${SCRIPT_PATH}/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
-perl ${SCRIPT_PATH}/find_paired_crisprs.pl --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
+perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --specific-sites CCATTGCAAAGAGGTTCCGCTAT CCGCTATGATTCAGCTTTGGTGT CCTTGATGATTACCTGAATGGCC GTTCCGCTATGATTCAGCTTTGG GGTGTCTGCTTTGATGGACATGG GGACATGGAAGAAGACATCTTGG ATGGAAGAAGACATCTTGGAAGG GACCTTGATGATTACCTGAATGG --species ${SPECIES} --exon-ids "$@" --crispr-yaml-file ${FILESTEM}_crisprs.yaml --pair-yaml-file ${FILESTEM}_pairs.yaml --fq-file ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
 
-#this should be condensed into a single step like the paired_crisprs_wge
-echo 'Submitting bwa aln step'
-bsub -K -o "${FILESTEM}_align.out" -e "${FILESTEM}_align.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N -m 1000000000 '"${GENOME}"' '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sai'
+#user must give us a .fa file, we run
+#perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
 
-echo 'Submitting bwa samse step'
-bsub -K -o "${FILESTEM}_samse.out" -e "${FILESTEM}_samse.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa samse -n 1000000000 '"${GENOME}"' '"${FILESTEM}"'.sai '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sam'
-
-echo 'Getting sorted bam file'
-/software/solexa/bin/aligners/bwa/current/xa2multi.pl $FILESTEM.sam | /software/solexa/bin/samtools view -bS - | /software/solexa/bin/samtools sort - ${FILESTEM}.sorted
-
-echo 'Making bed file'
-bamToBed -i "${FILESTEM}.sorted.bam" > "${FILESTEM}.bed" || die "bamToBed failed!"
-
-echo 'Retrieving sequences'
-bsub -K -o "${FILESTEM}_fasta.out" -e "${FILESTEM}_fasta.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" 'fastaFromBed -tab -fi '"${GENOME}"' -bed '"${FILESTEM}"'.bed -fo '"${FILESTEM}"'.with_seqs.tsv'
-
-echo 'Merging sequences'
-perl ${SCRIPT_PATH}/merge_fasta.pl "${FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv" > ${FILESTEM}.with_seqs.bed || die "merge_fasta.pl failed!"
+echo "Finding potential off targets"
+${SCRIPT_PATH}/tmp/scanham/scanham ${FILESTEM}_crisprs.fq ${GENOME} 6 > ${FILESTEM}.with_seqs.bed
 
 echo 'Removing invalid crisprs'
 #perl ${SCRIPT_PATH}/remove_invalid_crisprs.pl ${FILESTEM}_crisprs.fq ${FILESTEM}.with_seqs.bed > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
@@ -129,9 +109,9 @@ WINDOWSIZE=9000
 while read a b; do
     echo "Finding valid pairs for ${a} vs ${b}"
     #for each pair check all possible paired off-targets
-    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' > "paired_data/${a}_vs_${b}.txt"
-    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${a}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
-    windowBed -a "${FILESTEM}.valid-${b}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
+    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" > "paired_data/${a}_vs_${b}.txt"
+    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${a}.bed" -w "$WINDOWSIZE" >> "paired_data/${a}_vs_${b}.txt"
+    windowBed -a "${FILESTEM}.valid-${b}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" >> "paired_data/${a}_vs_${b}.txt"
 done < ${FILESTEM}_pairs.txt
 
 echo "Parsing windowbed output"

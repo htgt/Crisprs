@@ -1,9 +1,7 @@
 #!/bin/bash
 
 #
-# TODO:
-#   stop using ah19 paths, make it configurable.
-#   modify split bed to bail if a crispr has more than, say, 8k off targets.
+#   the intention is to bsub this job, it will do no bsubbing 
 #
 
 function die () {
@@ -12,6 +10,10 @@ function die () {
     else
         echo "Die was called with no error message"
     fi
+
+    #email me if it fails
+    echo "job failed (${FILESTEM} ${SPECIES}): $@" | mail -s "Paired crispr search failed" ah19@sanger.ac.uk
+
     exit 1
 }
 
@@ -19,9 +21,11 @@ USAGE='Usage: paired_crisprs.sh <gene> <species> <exon ids>'
 
 SCRIPT_PATH=~ah19/work/paired_crisprs
 
-if [ -z "$LIMS2_DB" ]; then
-    die "You must set the lims2 environment."
-fi
+PATH=/software/perl-5.12.2/bin:$PATH
+
+# if [ -z "$LIMS2_DB" ]; then
+#     die "You must set the lims2 environment."
+# fi
 
 if [ -z "$1" ]; then
     die "You must specify a gene:\n$USAGE"
@@ -67,7 +71,7 @@ bed_path=$(which bamToBed)
     die "Can't find bamToBed, make sure bedTools is in your path."
  fi
 
-BASE_DIR=/lustre/scratch110/sanger/`whoami`/gibson/${FILESTEM}_paired_crisprs
+BASE_DIR=/lustre/scratch110/sanger/`whoami`/wge/${FILESTEM}_paired_crisprs
 echo "Working dir is $BASE_DIR"
 
 if [ -d "$BASE_DIR" ]; then
@@ -80,36 +84,33 @@ cd "$BASE_DIR"
 #write the genome and exons and stuff so we know what was run after the fact
 echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" > info.txt
 
+PERL5LIB=/nfs/users/nfs_a/ah19/work/WGE/lib:/software/perl-5.12.2/lib/5.12.2/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/lib/perl5:/software/pubseq/PerlModules/BioPerl/1_6_920:$PERL5LIB
+
 #
-#what about UTR??? we need to label crisprs identified in the UTR. in the name somewhere so that later 
-#it can be easily chosen
+# this will be gotten from the db, creating crisprs.fq, crisprs.yaml and pairs.yaml
 #
 echo "Generating paired crisprs"
-#perl ${SCRIPT_PATH}/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
-perl ${SCRIPT_PATH}/find_paired_crisprs.pl --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"
+perl /nfs/users/nfs_a/ah19/work/WGE/bin/find_paired_crisprs.pl --environment development --species "${SPECIES}" --gene-ids "$@" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --pair-yaml-file "pairs.yaml" || die "find_paired_crisprs.pl failed!"
 
-#this should be condensed into a single step like the paired_crisprs_wge
-echo 'Submitting bwa aln step'
-bsub -K -o "${FILESTEM}_align.out" -e "${FILESTEM}_align.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N -m 1000000000 '"${GENOME}"' '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sai'
+echo 'Aligning and outputting to bed file'
+/software/solexa/bin/bwa samse -n 100000000 "${GENOME}" <(/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N -m 1000000000 "${GENOME}" crisprs.fq) crisprs.fq | /software/solexa/bin/aligners/bwa/current/xa2multi.pl | /software/solexa/bin/samtools view -bS - | /software/solexa/bin/samtools sort - ${FILESTEM}.sorted || die "aligning failed!"
 
-echo 'Submitting bwa samse step'
-bsub -K -o "${FILESTEM}_samse.out" -e "${FILESTEM}_samse.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" '/software/solexa/bin/bwa samse -n 1000000000 '"${GENOME}"' '"${FILESTEM}"'.sai '"${FILESTEM}"'_crisprs.fq > '"${FILESTEM}"'.sam'
-
-echo 'Getting sorted bam file'
-/software/solexa/bin/aligners/bwa/current/xa2multi.pl $FILESTEM.sam | /software/solexa/bin/samtools view -bS - | /software/solexa/bin/samtools sort - ${FILESTEM}.sorted
-
-echo 'Making bed file'
-bamToBed -i "${FILESTEM}.sorted.bam" > "${FILESTEM}.bed" || die "bamToBed failed!"
+bamToBed -i "${FILESTEM}.sorted.bam" > "${FILESTEM}.bed" || die "Couldn't make bed file"
 
 echo 'Retrieving sequences'
-bsub -K -o "${FILESTEM}_fasta.out" -e "${FILESTEM}_fasta.err" -G team87-grp -M 4000000 -R "select[mem>4000] rusage[mem=4000]" 'fastaFromBed -tab -fi '"${GENOME}"' -bed '"${FILESTEM}"'.bed -fo '"${FILESTEM}"'.with_seqs.tsv'
+fastaFromBed -tab -fi "${GENOME}" -bed "${FILESTEM}".bed -fo "${FILESTEM}".with_seqs.tsv
 
 echo 'Merging sequences'
 perl ${SCRIPT_PATH}/merge_fasta.pl "${FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv" > ${FILESTEM}.with_seqs.bed || die "merge_fasta.pl failed!"
 
+#we don't need these now we have a merged one
+rm "{FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv"
+
 echo 'Removing invalid crisprs'
-#perl ${SCRIPT_PATH}/remove_invalid_crisprs.pl ${FILESTEM}_crisprs.fq ${FILESTEM}.with_seqs.bed > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
 perl ${SCRIPT_PATH}/remove_invalid_crisprs.pl --species "${SPECIES}" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --bed-file "${FILESTEM}.with_seqs.bed" > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
+
+#only keep valid bed file
+rm "{FILESTEM}.with_seqs.bed"
 
 echo 'Splitting bed file'
 perl ${SCRIPT_PATH}/split_bed.pl "${FILESTEM}.valid.bed" || die "split_bed.pl failed!"
