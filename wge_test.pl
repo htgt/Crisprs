@@ -64,8 +64,8 @@ sub process_bed {
 
     #we have to force the types on the first entry
     #so postgres knows what they should be
-    #$data[0]->[0] .= '::text';
-    #$data[0]->[1] .= '::int';
+    $data[0]->[0] .= '::text';
+    $data[0]->[1] .= '::int';
 
     return \@data;
 }
