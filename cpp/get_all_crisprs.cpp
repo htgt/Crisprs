@@ -1,5 +1,5 @@
 /*
-    scanham
+    get_all_crisprs
     Copyright (C) 2013 Genome Research Limited
 
     This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,7 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/* Written by German Tischler (gt1@sanger.ac.uk) in 2013 */
+/* Modified version of scanham originally written by German Tischler (gt1@sanger.ac.uk) in 2013 */
 
 #include <iostream>
 #include <cstdlib>
