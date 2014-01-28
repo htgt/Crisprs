@@ -6,9 +6,13 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 
-use LIMS2::Model;
+use LIMS2::REST::Client;
 use YAML::Any qw( LoadFile DumpFile Dump );
 use Try::Tiny;
+use Log::Log4perl qw(:easy);
+use Data::Dumper;
+
+Log::Log4perl->easy_init($DEBUG);
 
 my ( $species, $assembly, @yaml_files );
 my $commit = 0;
@@ -23,7 +27,7 @@ GetOptions(
 
 die pod2usage( 2 ) unless $species and $assembly and @yaml_files;
 
-my $model = LIMS2::Model->new( user => 'tasks' );
+my $client = LIMS2::REST::Client->new_with_config(configfile => $ENV{LIMS2_REST_CLIENT_CONFIG});
 
 for my $filename ( @yaml_files ) {
     unless ( -f $filename ) {
@@ -37,6 +41,7 @@ for my $filename ( @yaml_files ) {
     
     while ( my ( $exon_id, $crisprs ) = each %{ $data } ) {
         #we don't care about the crispr id so we just get the values
+        print STDERR "Exon ID: $exon_id\n";
         for my $crispr ( values %{$crisprs} ) {
             #skip a crispr if it has already been entered (in case some fail and some don't)
             #next if defined $crispr->{db_id};
@@ -45,30 +50,26 @@ for my $filename ( @yaml_files ) {
             if ( $exon_id eq "ENSExistingCrisprs" ) {
                 print STDERR "Updating OTS instead of creating a new crispr\n";
 
-                try {
-                    $model->txn_do(
-                        sub {
-                            my ( $db_id ) = $crispr->{id} =~ /(\d+)/;
-                            my $db_cr = $model->schema->resultset("Crispr")->find( $db_id );
+                my ( $db_id ) = $crispr->{id} =~ /(\d+)/;
 
-                            print STDERR "Updating " . $db_cr->id . " with " 
-                                       . $crispr->{off_target_summary} . "\n";
+                print STDERR "Updating " . $db_id . " with " 
+                             . $crispr->{off_target_summary} . "\n";
 
-                            $db_cr->off_target_summaries->find( { algorithm => 'bwa' } )->update( {
-                                summary => $crispr->{off_target_summary} 
-                            } );
+                if ( $commit ){
+                    try{
+                        my $summary = $client->POST("crispr_off_target_summary", 
+                        {
+                            id                 => $db_id,
+                            algorithm          => 'bwa',
+                            off_target_summary => $crispr->{off_target_summary},
+                        });
+                    }
+                    catch{
+                        print STDERR "Update failed: $_";
+                        $failed = 1;
+                    };
 
-                            unless ( $commit ) {
-                                $model->txn_rollback;
-                            }
-                        }
-                    );
                 }
-                catch {
-                    print STDERR "$_\n";
-                    $model->txn_rollback;
-                    $failed = 1;
-                };
 
                 next;
             }
@@ -86,23 +87,19 @@ for my $filename ( @yaml_files ) {
             # - if it fails we want to rollback
             #
 
-            try {
-                $model->txn_do(
-                    sub {
-                        my $db_crispr = $model->create_crispr( $crispr );
-                        if ( $commit ) {
-                            $crispr->{db_id} = $db_crispr->id;
-                        }
-                        else {
-                            $model->txn_rollback;
-                        }
-                    }
-                );
+            if ($commit){
+                print STDERR "Creating crispr: ".Dumper($crispr);
+                try{
+                    my $new_crispr = $client->POST("single_crispr", $crispr);
+
+                    print STDERR "Crispr created with id ".$new_crispr->{id}."\n";
+                    $crispr->{db_id} = $new_crispr->{id};
+                }
+                catch{
+                    print STDERR "Crispr creation failed: $_";
+                    $failed = 1;
+                };
             }
-            catch {
-                print STDERR "$_\n";
-                $failed = 1;
-            };
 
             $crispr->{id} = $crispr_id; #put the id back in
             delete $crispr->{comment}; #no point writing this to disk

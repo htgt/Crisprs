@@ -6,9 +6,13 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 
-use LIMS2::Model;
+use LIMS2::REST::Client;
 use YAML::Any qw( LoadFile DumpFile );
 use Try::Tiny;
+use Log::Log4perl qw(:easy);
+use Data::Dumper;
+
+Log::Log4perl->easy_init($DEBUG);
 
 my ( $species, @crisprs, @pairs );
 my $commit = 0;
@@ -23,7 +27,7 @@ GetOptions(
 
 die pod2usage( 2 ) unless $species and @crisprs and @pairs;
 
-my $model = LIMS2::Model->new( user => 'tasks' );
+my $client = LIMS2::REST::Client->new_with_config(configfile => $ENV{LIMS2_REST_CLIENT_CONFIG});
 
 for my $crispr_yaml ( @crisprs ) {
     my $pair_yaml = shift @pairs;
@@ -40,32 +44,27 @@ for my $crispr_yaml ( @crisprs ) {
 
             if ( $exon_id eq "ENSExistingCrisprs" ) {
                 #print STDERR "Updating OTS instead of creating a new pair\n";
-                try {
-                    $model->txn_do(
-                        sub {
-                            my ( $l_id ) = $l_crispr->{id} =~ /(\d+)/;
-                            my ( $r_id ) = $r_crispr->{id} =~ /(\d+)/;
-                            my $db_pair = $model->schema->resultset("CrisprPair")->find(
-                                { left_crispr_id => $l_id, right_crispr_id => $r_id }
-                            );
+                my ( $l_id ) = $l_crispr->{id} =~ /(\d+)/;
+                my ( $r_id ) = $r_crispr->{id} =~ /(\d+)/;
+                
+                if($commit){
+                    try{
+                        my $updated_pair = $client->POST("crispr_pair_off_target_summary",
+                        {
+                            l_id               => $l_id,
+                            r_id               => $r_id,
+                            off_target_summary => $pair->{off_target_summary},
+                        });
+                
 
-                            print STDERR "Updating " . $db_pair->id . " with " 
-                                       . $pair->{off_target_summary} . "\n";
-
-                            $db_pair->update( { 
-                                off_target_summary => $pair->{off_target_summary} 
-                            } );
-
-                            unless ( $commit ) {
-                                $model->txn_rollback;
-                            }
-                        }
-                    );
+                        print STDERR "Updated " . $updated_pair->{id} . " with " 
+                                       . $updated_pair->{off_target_summary} . "\n";
+                    }
+                    catch {
+                        print STDERR "Update failed: $_\n";
+                        $failed = 1;
+                    };
                 }
-                catch {
-                    print STDERR "$_\n";
-                    $model->txn_rollback;
-                };
 
                 next;
             }
@@ -81,29 +80,17 @@ for my $crispr_yaml ( @crisprs ) {
                     die "You must insert the crispr data into the db first!";
                 }
 
-                $model->txn_do(
-                    sub {
-                        #print STDERR "Adding: " . $l_crispr->{db_id} . ", " . $r_crispr->{db_id} . "\n";
-                        #this should be done in the model plugin
-                        my $db_pair = $model->schema->resultset("CrisprPair")->update_or_create( 
-                            {
-                                left_crispr_id     => $l_crispr->{db_id},
-                                right_crispr_id    => $r_crispr->{db_id},
-                                spacer             => $pair->{spacer},
-                                off_target_summary => $pair->{off_target_summary},
-                            },
-                            { key => "unique_pair" } 
-                        );
-
-                        #add the pair db id to the file if we're persisting
-                        if ( $commit ) {
-                            $pair->{db_id} = $db_pair->id;
-                        }
-                        else {
-                            $model->txn_rollback;
-                        }
-                    }
-                );
+                if ($commit){
+                    my $new_pair = $client->POST("crispr_pair", 
+                    {
+                        l_id => $l_crispr->{db_id},
+                        r_id => $r_crispr->{db_id},
+                        spacer => $pair->{spacer},
+                        off_target_summary => $pair->{off_target_summary},
+                    });
+                    $pair->{db_id} = $new_pair->{id};
+                    print STDERR "Created or updated crispr pair with id ".$new_pair->{id}."\n";
+                }
             }
             catch {
                 print STDERR "$_ ($crispr_yaml & $pair_yaml)";
