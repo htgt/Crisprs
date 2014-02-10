@@ -40,7 +40,7 @@ for my $filename ( @paired_files ) {
     my ( %duplicates, %crispr_names );
     my ( %num_valid_pairs, $shortest );
 
-    #my @all;
+    my @all;
 
     open( my $fh, "<", $filename ) || die "Couldn't open $filename";
 
@@ -149,9 +149,13 @@ for my $filename ( @paired_files ) {
     # my @rows = sort { abs($a->{distance}) <=> abs($b->{distance}) } @all;
     
     # my $total_in_150 = 0;
-    # for (@rows) {
-    #     last if $_->{distance} > 150;
+    # say "l_name,l_locus,distance,r_name,r_locus";
+
+    # for ( @rows ) {
+    #     last if $_->{distance} > 9000;
     #     ++$total_in_150;
+
+    #     say join ",", $_->{first_name}, $_->{first_locus}, $_->{distance}, $_->{second_name}, $_->{second_locus};
     # }
 
     # say "$filename";

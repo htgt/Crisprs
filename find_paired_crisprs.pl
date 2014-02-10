@@ -8,7 +8,7 @@ use feature qw( say );
 use Getopt::Long;
 use Pod::Usage;
 use LIMS2::Util::EnsEMBL;
-use LIMS2::Model;
+#use LIMS2::Model;
 use Bio::Perl qw( revcom );
 use YAML::Any qw( DumpFile );
 
@@ -53,7 +53,7 @@ my $exon_re = $exon_regexes{ $species };
 my $region_re = qr/(\d+|X|Y):(\d+)-(\d+)/;
 
 my $e = LIMS2::Util::EnsEMBL->new( species => $species );
-my $l = LIMS2::Model->new( user => "lims2" );
+#my $l = LIMS2::Model->new( user => "lims2" );
 my %pairs_by_exon;
 
 #why arent these functions. this whole file is a mess now and needs to be modularised 
@@ -138,10 +138,11 @@ for my $exon_id ( @exon_ids ) {
 }
 
 if ( @pair_ids ) {
-    my @pairs = $l->schema->resultset( "CrisprPair" )->search(
-        { 'me.id' => { -IN => \@pair_ids } },
-        { prefetch => [ "left_crispr", "right_crispr" ] }
-    );
+    #my @pairs = $l->schema->resultset( "CrisprPair" )->search(
+    #    { 'me.id' => { -IN => \@pair_ids } },
+    #    { prefetch => [ "left_crispr", "right_crispr" ] }
+    #);
+    my @pairs;
 
     #emulate the format used by everything else
     my @matches;

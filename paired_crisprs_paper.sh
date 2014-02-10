@@ -79,7 +79,8 @@ echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" 
 #
 
 echo "Generating paired crisprs"
-perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --specific-sites CCATTGCAAAGAGGTTCCGCTAT CCGCTATGATTCAGCTTTGGTGT CCTTGATGATTACCTGAATGGCC GTTCCGCTATGATTCAGCTTTGG GGTGTCTGCTTTGATGGACATGG GGACATGGAAGAAGACATCTTGG ATGGAAGAAGACATCTTGGAAGG GACCTTGATGATTACCTGAATGG --species ${SPECIES} --exon-ids "$@" --crispr-yaml-file ${FILESTEM}_crisprs.yaml --pair-yaml-file ${FILESTEM}_pairs.yaml --fq-file ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
+#perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --specific-sites CCATTGCAAAGAGGTTCCGCTAT CCGCTATGATTCAGCTTTGGTGT CCTTGATGATTACCTGAATGGCC GTTCCGCTATGATTCAGCTTTGG GGTGTCTGCTTTGATGGACATGG GGACATGGAAGAAGACATCTTGG ATGGAAGAAGACATCTTGGAAGG GACCTTGATGATTACCTGAATGG --species ${SPECIES} --exon-ids "$@" --crispr-yaml-file ${FILESTEM}_crisprs.yaml --pair-yaml-file ${FILESTEM}_pairs.yaml --fq-file ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
+perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --specific-sites CCACCCTGAGAGCAGCTGCCTCC GGCGGCCACCGCTCCTGGCAAGG  --species ${SPECIES} --exon-ids "$@" --crispr-yaml-file ${FILESTEM}_crisprs.yaml --pair-yaml-file ${FILESTEM}_pairs.yaml --fq-file ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
 
 #user must give us a .fa file, we run
 #perl ${SCRIPT_PATH}/find_paired_crisprs.pl --no-expand-seq --species "${SPECIES}" --exon-ids "$@" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --pair-yaml-file "${FILESTEM}_pairs.yaml" || die "find_paired_crisprs.pl failed!"

@@ -37,14 +37,15 @@ parse_fq_file( \%crisprs );
 
 #we store all the hamming distances so we can create a summary later.
 #we also count the number of lines that have N sequence so we can say how many were thrown away
-my ( $num_n_lines, %hd_data );
+my $num_n_lines = 0;
+my ( %hd_data );
 
 open(my $bed_fh, "<", $bed_file) or die "Couldn't open $bed_file: $!";
 while ( my $line = <$bed_fh> ) {
     chomp $line;
     my ( $chr, $start, $end, $name, $unknown, $strand ) = split /\s+/, $line;
 
-    my $seq;
+    my ( $seq );
     if ( $name =~ /(.+)-([CTAGNctagn]{23})/ ) {
         #print STDERR "Split $name into $1 $2\n";
         $seq = $2;
@@ -75,20 +76,24 @@ while ( my $line = <$bed_fh> ) {
     #if we havent looked at this crispr yet create an off targets hash with all the values set to 0,
     #so that when we take it out of the db no fields are missing.
     unless ( defined $hd_data{$exon_id}->{$crispr_id} ) {
-        $hd_data{$exon_id}->{$crispr_id}{off_targets} = { map { $_ => 0 } (0 .. 5) };
+        $hd_data{$exon_id}->{$crispr_id}{off_targets} = { map { $_ => 0 } (0 .. ($MAX_EDIT_DISTANCE-1)) };
     }
 
     #we're assuming reverse complemented pam, so we know orientation
     #check hamming distance to make sure the orientation is as we expect
 
+    #all sequences we get are from the global positive strand, so 
+    #we know if it begins CC it must be on the -ve strand
+
     #
-    # mismatch in the pam gets counted here. how can we get rid of it? 
-    # will have to check N bp, if its a mismatch then $hd--
     # we also count the match that is the original location, so there's always 1 0mm entry
     #
 
+    #note: if you think you need to change this logic, you are wrong. (happened to me twice)
+
     #we have to allow 6 mismatches total, as we don't count the N in the pam as a mismatch
     my $valid = 0;
+    my $hd;
     if ( $seq =~ /^CC/i && $rev_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
 
@@ -99,7 +104,9 @@ while ( my $line = <$bed_fh> ) {
             $rev_hd--;
         }
 
-        $hd_data{$exon_id}->{$crispr_id}{off_targets}{$rev_hd}++;
+        $hd = $rev_hd;
+
+        #$hd_data{$exon_id}->{$crispr_id}{off_targets}{$rev_hd}++;
     }
     elsif ( $seq =~ /GG$/i && $fwd_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
@@ -109,19 +116,24 @@ while ( my $line = <$bed_fh> ) {
             $fwd_hd--;
         }
 
+        $hd = $fwd_hd;
+
         #if ( $fwd_hd > 5 ) {
         #    print STDERR "$seq\n" . $crisprs{$name}->{fwd} . " has >5 mismatches??\n";
         #}
 
         #we have to do this for both just in case
-        $hd_data{$exon_id}->{$crispr_id}{off_targets}{$fwd_hd}++;
+        #$hd_data{$exon_id}->{$crispr_id}{off_targets}{$fwd_hd}++;
     }
 
-    if ( $valid ) {
+    #we have to check hd is _less_ than max edit because sometimes 
+    #we get ones that are too big and we don't care about them, even though they're valid
+    if ( $valid && $hd < $MAX_EDIT_DISTANCE ) {
         #print STDERR "$seq looks like it has a valid pam\n";
 
         #print $line; #uncomment this to not put seqs in
-        print "$chr\t$start\t$end\t$name-$seq\t$unknown\t$strand\n";
+        $hd_data{$exon_id}->{$crispr_id}{off_targets}{$hd}++;
+        print "$chr\t$start\t$end\t$name-$seq\t$hd\t$strand\n";
     }
     else {
         #print STDERR "Skipping $seq: invalid pam site.\n";
@@ -131,7 +143,7 @@ while ( my $line = <$bed_fh> ) {
 
 write_yaml_file();
 
-print STDERR "Skipped a total of $num_n_lines N sequences:\n";
+print STDERR "Skipped a total of $num_n_lines N sequences\n";
 #print STDERR "$_\n" for @n_lines;
 
 sub hamming_distance {
@@ -142,7 +154,7 @@ sub hamming_distance {
 }
 
 sub write_yaml_file {
-    #open the fq file (might need to use getopt to set $yaml_file)
+    #open the fq file
     my $crisprs = ( -f $crispr_yaml_file ) ? LoadFile( $crispr_yaml_file ) : {};
 
     #create a json string of our mismatch data and add it to the crispr yaml
@@ -155,6 +167,10 @@ sub write_yaml_file {
             my $ordered = join ", ", map { $_ . ": " . $crispr->{off_targets}{$_} } 
                                         sort { $a <=> $b } 
                                             keys %{ $crispr->{off_targets} };
+
+            unless ( exists $crisprs->{$exon_id}{$crispr_id} ) {
+                $crispr_id = substr $crispr_id, 0, -1; #strip A or B if not in file, for db
+            }
 
             #make it the same format as before (not valid json, but it should be later)
             $crisprs->{$exon_id}{$crispr_id}{off_target_summary} = "{" . $ordered . "}";
@@ -176,12 +192,13 @@ sub parse_fq_file {
     while ( my $line = <$fq_fh> ) {
         chomp $line;
 
-        if ( $line =~ /^@(.*)/ ) {
+        #allow fq or fa
+        if ( $line =~ /^[@>](.*)/ ) {
             $current = $1;
         }
         else {
             die "Error: there must only be one sequence per entry" if defined $crisprs->{ $current };
-            die "Crisprs shouldn't be reverse complemented!" unless $line =~ /GG$/;
+            die "Crisprs shouldn't be reverse complemented! ($line)" unless $line =~ /GG$/;
 
             #add fwd and reverse so we can compute hamming distances later.
             #we call it rev as we assume all crispr sequences have been reverse complemented.
@@ -253,6 +270,7 @@ remove_invalid_crisprs.pl [options]
     --fq-file            location of the crispr fq data created by find_paired_crisprs.pl
     --bed-file           location of bed file containing all potential off targets and their sequence
     --max-edit-distance  the maximum allowed edit distance for mismatches [optional, default 6]
+                         note: this value must INCLUDE the N in the pam site.
     --help               show this dialog
 
 Example usage:

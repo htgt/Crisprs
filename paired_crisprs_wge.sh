@@ -21,8 +21,6 @@ USAGE='Usage: paired_crisprs.sh <gene> <species> <exon ids>'
 
 SCRIPT_PATH=~ah19/work/paired_crisprs
 
-PATH=/software/perl-5.12.2/bin:$PATH
-
 # if [ -z "$LIMS2_DB" ]; then
 #     die "You must set the lims2 environment."
 # fi
@@ -84,16 +82,24 @@ cd "$BASE_DIR"
 #write the genome and exons and stuff so we know what was run after the fact
 echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" > info.txt
 
-PERL5LIB=/nfs/users/nfs_a/ah19/work/WGE/lib:/software/perl-5.12.2/lib/5.12.2/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/lib/perl5:/software/pubseq/PerlModules/BioPerl/1_6_920:$PERL5LIB
+PATH=/software/perl-5.16.2/bin:/nfs/users/nfs_a/ah19/work/WGE/bin:$PATH
 
-#
-# this will be gotten from the db, creating crisprs.fq, crisprs.yaml and pairs.yaml
-#
+PERL5LIB=/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5:/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/work/WGE/lib:/software/perl-5.16.2/lib/5.16.2/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/lib/perl5:/software/pubseq/PerlModules/BioPerl/1_6_920:/software/pubseq/PerlModules/Ensembl/www_73_1/ensembl/modules:$PERL5LIB
+
+#remove any brave new world crap, temporary until i have a new bashrc
+PERL5LIB=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } split ":", $ENV{PERL5LIB};')
+PATH=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } split ":", $ENV{PATH};')
+
+export WGE_REST_CLIENT_CONFIG=/nfs/team87/farm3_lims2_vms/conf/wge-devel-rest-client.conf
+
 echo "Generating paired crisprs"
-perl /nfs/users/nfs_a/ah19/work/WGE/bin/find_paired_crisprs.pl --environment development --species "${SPECIES}" --gene-ids "$@" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --pair-yaml-file "pairs.yaml" || die "find_paired_crisprs.pl failed!"
+# perl /nfs/users/nfs_a/ah19/work/WGE/bin/find_paired_crisprs.pl --environment development --species "${SPECIES}" --gene-ids "$@" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --pair-yaml-file "pairs.yaml" || die "find_paired_crisprs.pl failed!"
+
+#change back to this one once we know remove_invalid_crisprs is as expected
+find_crisprs.pl --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --species "${SPECIES}" --ids "$@" || die "retrieving crisprs from db failed!"
 
 echo 'Aligning and outputting to bed file'
-/software/solexa/bin/bwa samse -n 100000000 "${GENOME}" <(/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N -m 1000000000 "${GENOME}" crisprs.fq) crisprs.fq | /software/solexa/bin/aligners/bwa/current/xa2multi.pl | /software/solexa/bin/samtools view -bS - | /software/solexa/bin/samtools sort - ${FILESTEM}.sorted || die "aligning failed!"
+/software/solexa/bin/bwa samse -n 100000000 "${GENOME}" <(/software/solexa/bin/bwa aln -n 6 -o 0 -l 20 -k 5 -N -m 1000000000 "${GENOME}" crisprs.fq) crisprs.fq | /software/solexa/pkg/bwa/current/xa2multi.pl | /software/hpag/samtools/0.1.19/bin/samtools view -bS - | /software/hpag/samtools/0.1.19/bin/samtools sort - ${FILESTEM}.sorted || die "aligning failed!"
 
 bamToBed -i "${FILESTEM}.sorted.bam" > "${FILESTEM}.bed" || die "Couldn't make bed file"
 
@@ -104,39 +110,44 @@ echo 'Merging sequences'
 perl ${SCRIPT_PATH}/merge_fasta.pl "${FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv" > ${FILESTEM}.with_seqs.bed || die "merge_fasta.pl failed!"
 
 #we don't need these now we have a merged one
-rm "{FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv"
+rm "${FILESTEM}.bed" "${FILESTEM}.with_seqs.tsv"
 
 echo 'Removing invalid crisprs'
-perl ${SCRIPT_PATH}/remove_invalid_crisprs.pl --species "${SPECIES}" --fq-file "${FILESTEM}_crisprs.fq" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --bed-file "${FILESTEM}.with_seqs.bed" > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
+perl ${SCRIPT_PATH}/remove_invalid_crisprs.pl --species "${SPECIES}" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --bed-file "${FILESTEM}.with_seqs.bed" --max-edit-distance 6 > "${FILESTEM}.valid.bed" || die "remove_invalid_crisprs.pl failed!"
 
 #only keep valid bed file
-rm "{FILESTEM}.with_seqs.bed"
+rm "${FILESTEM}.with_seqs.bed"
 
-echo 'Splitting bed file'
-perl ${SCRIPT_PATH}/split_bed.pl "${FILESTEM}.valid.bed" || die "split_bed.pl failed!"
+#perl ${SCRIPT_PATH}/tmp/wge_test.pl --species ${SPECIES} --bed-file "${FILESTEM}.valid.bed" --crispr-yaml-file crisprs.yaml --max-offs 5000
+
+#this needs to be +x and in the path
+persist_crisprs.pl --species "${SPECIES}" --crispr-yaml-file "crisprs.yaml" --bed-file "${FILESTEM}.valid.bed" --max-offs 5000 --commit || die "Crispr persist step failed!"
+
+#echo 'Splitting bed file'
+#perl ${SCRIPT_PATH}/split_bed.pl "${FILESTEM}.valid.bed" || die "split_bed.pl failed!"
 
 #
 # we now have all the crispr information, get the paired data
 #
 
 #temporary fix to give us all the permutations in an easy to process format. replaces .yaml with .txt and outputs to that
-perl -MYAML::Any=LoadFile -wE '(my $file = $ARGV[0]) =~ s/(.*)\.yaml/$1\.txt/; my $data = LoadFile($ARGV[0]) || die "yaml error"; open(my $fh, ">", $file) || die "Cant open $file"; while( my ($exon_id, $pairs) = each %{ $data } ) { say $fh "${exon_id}_" . $_->{left_crispr} . " ${exon_id}_" . $_->{right_crispr} for @{$pairs}  }' ${FILESTEM}_pairs.yaml || die "Creating ${FILESTEM}_pairs.txt filed"
+# perl -MYAML::Any=LoadFile -wE '(my $file = $ARGV[0]) =~ s/(.*)\.yaml/$1\.txt/; my $data = LoadFile($ARGV[0]) || die "yaml error"; open(my $fh, ">", $file) || die "Cant open $file"; while( my ($exon_id, $pairs) = each %{ $data } ) { say $fh "${exon_id}_" . $_->{left_crispr} . " ${exon_id}_" . $_->{right_crispr} for @{$pairs}  }' ${FILESTEM}_pairs.yaml || die "Creating ${FILESTEM}_pairs.txt filed"
 
-#run windowbed on all the possible combinations
-echo "Running windowbed on" `wc -l ${FILESTEM}_pairs.txt | awk '{print $1}'` "files"
+# #run windowbed on all the possible combinations
+# echo "Running windowbed on" `wc -l ${FILESTEM}_pairs.txt | awk '{print $1}'` "files"
 
-mkdir paired_data || die "Couldn't make paired data folder"
-WINDOWSIZE=9000
-while read a b; do
-    echo "Finding valid pairs for ${a} vs ${b}"
-    #for each pair check all possible paired off-targets
-    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' > "paired_data/${a}_vs_${b}.txt"
-    windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${a}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
-    windowBed -a "${FILESTEM}.valid-${b}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
-done < ${FILESTEM}_pairs.txt
+# mkdir paired_data || die "Couldn't make paired data folder"
+# WINDOWSIZE=9000
+# while read a b; do
+#     echo "Finding valid pairs for ${a} vs ${b}"
+#     #for each pair check all possible paired off-targets
+#     windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' > "paired_data/${a}_vs_${b}.txt"
+#     windowBed -a "${FILESTEM}.valid-${a}.bed" -b "${FILESTEM}.valid-${a}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
+#     windowBed -a "${FILESTEM}.valid-${b}.bed" -b "${FILESTEM}.valid-${b}.bed" -w "$WINDOWSIZE" | awk '!($2==$8 && $1==$7)' >> "paired_data/${a}_vs_${b}.txt"
+# done < ${FILESTEM}_pairs.txt
 
-echo "Parsing windowbed output"
-perl ${SCRIPT_PATH}/process_paired_data.pl --fq-file "${FILESTEM}_crisprs.fq" --pair-yaml-file "${FILESTEM}_pairs.yaml" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --paired-output paired_data/*
+# echo "Parsing windowbed output"
+# perl ${SCRIPT_PATH}/process_paired_data.pl --fq-file "${FILESTEM}_crisprs.fq" --pair-yaml-file "${FILESTEM}_pairs.yaml" --crispr-yaml-file "${FILESTEM}_crisprs.yaml" --paired-output paired_data/*
 
 #echo "Persisting data"
 #perl ${SCRIPT_PATH}/persist_crisprs.pl --species "${SPECIES}" --assembly "${ASSEMBLY}" --crispr-yaml "${FILESTEM}_crisprs.yaml" --commit || die "Crispr persist step failed"
