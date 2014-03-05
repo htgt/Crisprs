@@ -40,7 +40,7 @@ void println(std::list<char> & current, std::string & seqname, int64_t & start, 
     }
 
     //the final 1 is the species id
-    std::cout << "," << pam_right << ",1" << '\n';
+    std::cout << "," << pam_right << ",2" << '\n';
 }
 
 int main(int argc, char * argv[])
@@ -107,7 +107,7 @@ int main(int argc, char * argv[])
                 if ( line[0] == '>' )
                 {
                     //switch the > to a < to get all before or after 10
-                    skip = ( ++num_done > 10 );
+                    skip = ( ++num_done < 10 );
 
                     seqid++;
                     seqname = line.substr(1, line.size()-1);
