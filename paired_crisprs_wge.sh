@@ -146,4 +146,4 @@ update_crispr_pair.pl --species "${SPECIES}" --pair-ids "$FILESTEM" --update-off
 
 echo "Completed successfully."
 
-rm $BASE_DIR
+rm -rf $BASE_DIR
