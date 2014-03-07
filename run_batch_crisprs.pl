@@ -7,6 +7,7 @@ use Log::Log4perl qw( :easy );
 
 use IPC::System::Simple qw( run );
 use Try::Tiny;
+use File::Path qw( remove_tree );
 
 BEGIN { Log::Log4perl->easy_init( $DEBUG ) }
 
@@ -36,8 +37,6 @@ while( my $line = <> ) {
         mkdir $dir || die "Couldn't make $dir";
 
         DEBUG "Running crispr finding on $line";
-
-        #run("crisprs_for_exon_wge.sh auto_$line $species $line > $log_file");
         
         #my $cmd = "echo $line > $log_file";
         my $cmd = "crisprs_for_exon_wge.sh $dir $species $line > $log_file";
@@ -64,7 +63,10 @@ while( my $line = <> ) {
     DEBUG "Deleting $dir";
 
     #always delete the folder
-    rmdir $dir;
+    my $deleted;
+    remove_tree( $dir, { result => \$deleted } );
+
+    WARN "Deleted " . scalar( @{ $deleted } ) . " files.";
 
     WARN "Processed " . ( $num_passed+$num_failed ) . " exons";
 }

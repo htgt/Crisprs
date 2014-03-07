@@ -93,9 +93,10 @@ while ( my $line = <$bed_fh> ) {
 
     #we have to allow 6 mismatches total, as we don't count the N in the pam as a mismatch
     my $valid = 0;
-    my $hd;
+    my ( $hd, $orientation );
     if ( $seq =~ /^CC/i && $rev_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
+        $orientation = 'L';
 
         #compare the N in the pam sites; if they don't match then the edit distance
         #is reporting 1 more than we want it to (because mismatch in N doesn't count)
@@ -110,6 +111,7 @@ while ( my $line = <$bed_fh> ) {
     }
     elsif ( $seq =~ /GG$/i && $fwd_hd <= $MAX_EDIT_DISTANCE ) {
         $valid = 1;
+        $orientation = 'R';
 
         #same as above, but the pam site is at the end.
         if ( $fwd_hd > 0 && substr($seq, 20, 1) ne substr($crisprs{$name}->{fwd}, 20, 1) ) {
@@ -133,7 +135,7 @@ while ( my $line = <$bed_fh> ) {
 
         #print $line; #uncomment this to not put seqs in
         $hd_data{$exon_id}->{$crispr_id}{off_targets}{$hd}++;
-        print "$chr\t$start\t$end\t$name-$seq\t$hd\t$strand\n";
+        print "$chr\t$start\t$end\t$name-$seq\t$hd$orientation\t$strand\n";
     }
     else {
         #print STDERR "Skipping $seq: invalid pam site.\n";
