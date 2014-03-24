@@ -292,6 +292,9 @@ int main(int argc, char * argv[])
 			names.push_back(it->first);
 		}
 		
+		//note: as far as i can see this doesn't do anything. 
+		//we end up doing & against all 1s.
+		
 		// mask with 2*patlen lower bits set
 		uint64_t andmask = 0;
 		for ( unsigned int i = 0; i < patlen; ++i )
@@ -395,10 +398,14 @@ int main(int argc, char * argv[])
 										// indeterminate bases in pattern
 										| paterr[j];
 								
-                                    //look up the SWAR algorithm for a full explanation of this kind of thing
-                                    //i still dont know what this actually does, but my guess is that it will
-                                    //only set the most significant bit so that we don't count 11 as 2 mismatches.
-                                    //that doesnt really make sense though cause this is an or, so i have no idea
+
+									//look up SWAR algorithm to explain this kind of thing properly.
+									//2 bits represents a single match, but if both bits are 'on' (if its a 3)
+									//we only want to count it once.
+									//what this does:
+									//1. make sure the least significant bit is set if the most significant bit is
+									//		(so that 10 becomes 01)
+									//2. set all most significant bits to 0. then the number of 1s is the pop count
 									uint64_t const m1 = (m | (m >> 1)) & (0x5555555555555555ull);
 									
 									// count number of mismatches + indeterminate bases

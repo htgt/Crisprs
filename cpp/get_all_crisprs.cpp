@@ -18,6 +18,12 @@
 
 /* Modified version of scanham originally written by German Tischler (gt1@sanger.ac.uk) in 2013 */
 
+/*
+    this is an awful hack. it should take an option to split the file, species, etc.
+    it should use 2bit instead of a list of chars, etc. etc.
+    its bad.
+*/
+
 #include <iostream>
 #include <cstdlib>
 #include <memory>
@@ -40,7 +46,7 @@ void println(std::list<char> & current, std::string & seqname, int64_t & start, 
     }
 
     //the final 1 is the species id
-    std::cout << "," << pam_right << ",2" << '\n';
+    std::cout << "," << pam_right << ",1" << '\n';
 }
 
 int main(int argc, char * argv[])
@@ -106,8 +112,10 @@ int main(int argc, char * argv[])
                 // start of new sequence?
                 if ( line[0] == '>' )
                 {
-                    //switch the > to a < to get all before or after 10
-                    skip = ( ++num_done < 10 );
+                    //change this to choose which half you want
+                    //set to > 10 to get everything before and including 10
+                    //set to <= 10 to get everything AFTER 10
+                    skip = ( ++num_done > 10 );
 
                     seqid++;
                     seqname = line.substr(1, line.size()-1);
@@ -157,15 +165,6 @@ int main(int argc, char * argv[])
                                 std::list<char>::iterator start = current.begin();
                                 if ( *(start) == 'C' && *(++start) == 'C' ) {
                                     total++;
-
-                                    // std::cout << seqname << ","; //chr
-                                    // std::cout << (seqpos-patlen) << ","; //start
-                                    // //display seq
-                                    // for (start=current.begin(); start!=current.end(); ++start) {
-                                    //     std::cout << *start;
-                                    // }
-
-                                    // std::cout << '\n';
 
                                     //last field is pam_right
                                     println(current, seqname, seq_start, 0);
