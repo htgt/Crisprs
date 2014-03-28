@@ -22,15 +22,29 @@ DEBUG "Processing file " . $ARGV[0] . " for $species";
 while( my $line = <> ) {
     chomp $line;
 
-    if ( $species eq "Human" ) {
-        die "Non human exon id provided!" unless $line =~ /ENSE000/;
+    my $filename;
+    if ( $line =~ /^ENS/ ) {
+        if ( $species eq "Human" ) {
+            die "Non human exon id provided!" unless $line =~ /ENSE000/;
+        }
+        else {
+            die "Non mouse exon id provided!" unless $line =~ /ENSMUSE000/;
+        }
+        $filename = $line;
+    }
+    elsif ( $line =~ /^\d+/ ) { #allow numbers
+        DEBUG "Got " . scalar( split /\s+/, $line ) . " crispr ids:";
+        #create a filename from truncated ids
+        ( $filename = substr $line, 0, 40 ) =~ s/\s+/_/g;
+        DEBUG "Filename is $filename";
     }
     else {
-        die "Non mouse exon id provided!" unless $line =~ /ENSMUSE000/;
+        die "Unrecognised id provided: $line\n";
     }
 
-    my $dir = "/lustre/scratch110/sanger/ah19/wge_exons/$line";
-    my $log_file = "/lustre/scratch109/sanger/ah19/crispr_logs/auto_$line.txt";
+    #actual filenames get added depending on the type
+    my $dir = "/lustre/scratch110/sanger/ah19/wge_exons/$filename";
+    my $log_file = "/lustre/scratch109/sanger/ah19/crispr_logs/auto_$filename.txt";
 
     try {
         DEBUG "Creating directory $dir";

@@ -38,155 +38,147 @@
 #include <cstdint>
 #include <cassert>
 
+int species_id;
+
 void println(std::list<char> & current, std::string & seqname, int64_t & start, int pam_right) {
     std::cout << seqname << "," << start << ","; //chr
     //display seq
-    for (std::list<char>::iterator it=current.begin(); it!=current.end(); ++it) {
+    for ( auto it=current.begin(); it != current.end(); ++it ) {
         std::cout << *it;
     }
 
     //the final 1 is the species id
-    std::cout << "," << pam_right << ",1" << '\n';
+    std::cout << "," << pam_right << "," << species_id << '\n';
 }
 
-int main(int argc, char * argv[])
-{
-    try
-    {
-        if ( argc < 1 )
-        {
-            std::cerr << "[U] usage: " << argv[0] << " <text>" << std::endl;
-            return EXIT_FAILURE;
-        }
-        
-        // current match end position
-        int64_t seqid = -1;
-        std::string seqname;
-        int64_t seqpos = 0;
-        int64_t patlen = 23;
+int main(int argc, char * argv[]) {
+    if ( argc < 3 ) {
+        std::cerr << "[U] usage: " << argv[0] << " <species_id> <text>" << std::endl;
+        return EXIT_FAILURE;
+    }
 
-        // character mapping table
-        uint8_t cmap[256];
-        // space table
-        bool smap[256];
-        // fill character mapping table
-        std::fill(&cmap[0],&cmap[sizeof(cmap)/sizeof(cmap[0])],4);
-        cmap['a'] = cmap['A'] = 0;
-        cmap['c'] = cmap['C'] = 1;
-        cmap['g'] = cmap['G'] = 2;
-        cmap['t'] = cmap['T'] = 3;
-        // fill space table
-        std::fill(&smap[0],&smap[sizeof(cmap)/sizeof(smap[0])],0);
-        for ( unsigned int i = 0; i < 256; ++i )
-            if ( isspace(i) )
-                smap[i] = 1;
-        
-        std::list<char> current (23, 'N');
+    species_id = atoi( argv[1] );
+    
+    // current match end position
+    std::string seqname;
+    int64_t seqpos = 0;
+    int64_t patlen = 23;
 
-        // open the text file
-        std::ifstream textistr(argv[1]);
-        if ( ! textistr.is_open() )
-        {
-            std::cerr << "[D] cannot open file " << argv[2] << std::endl;
-            throw std::runtime_error("Cannot open text file");
-        }
-        // read text file
-        //int64_t linecount = 0;
-        int64_t total = 0;
+    // character mapping table
+    uint8_t cmap[256];
+    // fill character mapping table
+    std::fill(&cmap[0],&cmap[sizeof(cmap)/sizeof(cmap[0])],4);
+    cmap['a'] = cmap['A'] = 0;
+    cmap['c'] = cmap['C'] = 1;
+    cmap['g'] = cmap['G'] = 2;
+    cmap['t'] = cmap['T'] = 3;
 
-        bool skip = true;
-        //std::string wanted = "19";
-        int64_t num_done = 0;
+    // space table
+    bool smap[256];
+    // fill space table
+    std::fill(&smap[0],&smap[sizeof(cmap)/sizeof(smap[0])],0);
+    for ( unsigned int i = 0; i < 256; ++i )
+        if ( isspace(i) )
+            smap[i] = 1;
+    
+    
 
-        while ( textistr )
-        {
-            //if ( ++linecount % 5000000 == 0 ) {
-            //    std::cerr << "At line " << linecount << std::endl;
-            //}
-            // get line
-            std::string line;
-            std::getline(textistr,line);
-            // if line is not empty
-            if ( line.size() )
-            {
-                // start of new sequence?
-                if ( line[0] == '>' )
-                {
-                    //change this to choose which half you want
-                    //set to > 10 to get everything before and including 10
-                    //set to <= 10 to get everything AFTER 10
-                    skip = ( ++num_done > 10 );
+    // open the text file
+    std::ifstream text (argv[2]);
+    if ( ! text.is_open() ) {
+        std::cerr << "[D] cannot open file " << argv[2] << std::endl;
+        throw std::runtime_error("Cannot open text file");
+    }
 
-                    seqid++;
-                    seqname = line.substr(1, line.size()-1);
-                    std::string::size_type first = seqname.find(" ");
+    uint64_t total = 0;
 
-                    if ( first != std::string::npos ) 
-                        seqname = seqname.substr(0, first);
+    //bool skip = true;
+    //int64_t num_done = 0;
 
-                    //strip Chr if its the first 3 characters
-                    if ( seqname.find("Chr") == 0 )
-                        seqname = seqname.substr(3, seqname.size()-1);
+    std::list<char> current (23, 'N');
+    std::string line;
 
-                    seqpos = 0;
+    while ( std::getline(text, line) ) {
+        //make sure the line isn't blank
+        if ( line.size() ) {
+            // start of new sequence?
+            if ( line[0] == '>' ) {
+                //extract seqname as all the textup to the first space,
+                //not including the >
+                seqname = line.substr(1, line.size()-1);
+                std::string::size_type first = seqname.find(" ");
 
-                    // skip = seqname.compare(wanted);
+                if ( first != std::string::npos ) 
+                    seqname = seqname.substr(0, first);
 
-                     if ( skip )
-                        std::cerr << "Skipping chromosome " << seqname << std::endl;
-                     else
-                        std::cerr << "Processing chromosome " << seqname << std::endl;
+                //strip Chr if its the first 3 characters
+                if ( seqname.find("Chr") == 0 )
+                    seqname = seqname.substr(3, seqname.size()-1);
 
-                    //std::cerr << "Processing chromosome " << seqname << std::endl;
-                }
-                else
-                {
-                    if ( skip )
-                        continue;
+                seqpos = 0;
 
-                    // scan the line
-                    for ( std::string::size_type i = 0; i < line.size(); ++i )
-                    {
-                        // next character
-                        uint8_t const c = line[i];
-                        
-                        // if character is not white space
-                        if ( ! smap[c] )
-                        {
-                            //remove first element and add new char to the end
-                            current.pop_front();
-                            current.push_back(c);
+                /*
+                    NOTE: we should reset current here or we might accidentally
+                          look at sequence spanning two chromosomes
+                */
 
-                            // if we have a full pattern length worth of text
-                            if ( ++seqpos >= patlen )
-                            {
-                                int64_t seq_start = seqpos - patlen;
-                                //check if this is a valid crispr
-                                std::list<char>::iterator start = current.begin();
-                                if ( *(start) == 'C' && *(++start) == 'C' ) {
-                                    total++;
+                //change this to choose which half you want
+                //set to > 10 to get everything before and including 10
+                //set to <= 10 to get everything AFTER 10
+                // skip = ( ++num_done > 10 );
+                // if ( skip )
+                //    std::cerr << "Skipping chromosome " << seqname << std::endl;
+                // else
+                //    std::cerr << "Processing chromosome " << seqname << std::endl;
 
-                                    //last field is pam_right
-                                    println(current, seqname, seq_start, 0);
-                                }
+                std::cerr << "Processing chromosome " << seqname << std::endl;
+                continue;
+            }
 
-                                std::list<char>::iterator end = current.end();
-                                if ( *(--end) == 'G' && *(--end) == 'G' ) {
-                                    total++;
-                                    println(current, seqname, seq_start, 1);
-                                }
-                            }
-                        }
-                        
+            //if ( skip )
+            //    continue;
+
+            // scan the line
+            for ( std::string::size_type i = 0; i < line.size(); ++i ) {
+                // next character
+                uint8_t const c = line[i];
+
+                //skip if its a whitespace character
+                if ( smap[c] )
+                    continue;
+                
+                //remove first element and add new char to the end
+                //should use an integer instead it would be quicker
+                current.pop_front();
+                current.push_back(c);
+
+                // if we have a full pattern length worth of text
+                if ( ++seqpos >= patlen ) {
+                    int64_t seq_start = seqpos - patlen;
+
+                    //we do this as two separate checks because if a CRISPR
+                    //is CC-GG we want to print it twice.
+
+                    //check if this is a valid crispr
+                    std::list<char>::iterator start = current.begin();
+                    if ( *(start) == 'C' && *(++start) == 'C' ) {
+                        total++;
+
+                        //last field is pam_right
+                        println(current, seqname, seq_start, 0);
+                    }
+
+                    std::list<char>::iterator end = current.end();
+                    if ( *(--end) == 'G' && *(--end) == 'G' ) {
+                        total++;
+                        println(current, seqname, seq_start, 1);
                     }
                 }
             }
         }
-        std::cerr << "Found a total of " << total << " crisprs" << std::endl;
     }
-    catch(std::exception const & ex)
-    {
-        std::cerr << "[D] " << ex.what() << std::endl;
-        return EXIT_FAILURE;
-    }
+
+    text.close();
+
+    std::cerr << "Found a total of " << total << " crisprs" << std::endl;
 }
