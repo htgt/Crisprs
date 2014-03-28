@@ -309,14 +309,19 @@ void CrisprUtil::_find_off_targets(vector<crispr_t> queries) {
 
         cerr << "Found " << total_matches << " off targets.\n";
 
-        cout << queries[i].id << "\n";
+        //output is:
+        //crispr_id,species_id,off_targets,off_target_summary
+        cout << queries[i].id << "," << int(crispr_data.species_id) << ",";
 
         //print off targets
         if ( total_matches < max_offs ) {
-            cout << util::array_to_string(off_targets.begin(), off_targets.end(), 0) << "\n";
+            cout << util::array_to_string(off_targets.begin(), off_targets.end(), 0) << ",";
+        }
+        else {
+            cout << "{},";
         }
 
-        cout << util::array_to_string(summary.begin(), summary.end(), 1) << "\n\n";
+        cout << util::array_to_string(summary.begin(), summary.end(), 1) << "\n";
     }
 
     t = clock() - t;
