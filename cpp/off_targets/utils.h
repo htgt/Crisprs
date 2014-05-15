@@ -4,6 +4,8 @@
 #include <vector>
 #include <string>
 
+#define ERROR_STR 0xFFFFFFFFFFFFFFFFull
+
 namespace util {
     //unsigned int pop_count(uint64_t x);
     std::vector<std::string> split(const std::string & text);

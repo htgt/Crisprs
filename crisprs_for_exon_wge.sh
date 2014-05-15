@@ -75,7 +75,8 @@ PERL5LIB=/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5:/nfs/team87/farm3_l
 PERL5LIB=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } split ":", $ENV{PERL5LIB};')
 PATH=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } split ":", $ENV{PATH};')
 
-export WGE_REST_CLIENT_CONFIG=/nfs/team87/farm3_lims2_vms/conf/wge-devel-rest-client.conf
+#export WGE_REST_CLIENT_CONFIG=/nfs/team87/farm3_lims2_vms/conf/wge-devel-rest-client.conf
+export WGE_REST_CLIENT_CONFIG=~/wge-devel-rest-client.conf
 
 echo "Generating paired crisprs"
 find_crisprs.pl --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --species "${SPECIES}" --ids "$@" || die "retrieving crisprs from db failed!"

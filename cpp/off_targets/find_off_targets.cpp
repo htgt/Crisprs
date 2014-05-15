@@ -48,6 +48,7 @@ int index_usage() {
     fprintf(stderr, "         -a TEXT    Assembly (e.g. GRCh37)\n");
     fprintf(stderr, "         -s TEXT    Species (e.g. Human)\n");
     fprintf(stderr, "         -e INT     Species ID - the species ID that your database uses");
+    fprintf(stderr, "         -f INT     Offset - the database offset this species has (default 0)");
     fprintf(stderr, "\n");
     fprintf(stderr, "Example usage:\n");
     fprintf(stderr, "find_off_targets index -i ~/human_chr1-11.csv -i ~/human_chr12_on.csv -o ~/index.bin");
@@ -64,15 +65,17 @@ int index(int argc, char * argv[]) {
 
     vector<string> infiles;
     uint8_t species_id = CHAR_MAX;
+    uint64_t offset = 0;
     string outfile = "", assembly = "", species = "";
 
-    while ( (c = getopt(argc, argv, "i:o:a:s:e:")) != -1 ) {
+    while ( (c = getopt(argc, argv, "i:o:a:s:e:f:")) != -1 ) {
         switch ( c ) {
             case 'i': infiles.push_back( optarg ); break;
             case 'o': outfile = optarg; break;
             case 'a': assembly = optarg; break;
             case 's': species = optarg; break;
             case 'e': species_id = stoi(optarg); break;
+            case 'f': offset = stoll(optarg); break;
             case '?': return index_usage();
         }
     }
@@ -114,6 +117,7 @@ int index(int argc, char * argv[]) {
     strcpy( data.assembly, assembly.c_str() );
     strcpy( data.species, species.c_str() );
     data.species_id = species_id;
+    data.offset = offset;
     data.num_seqs = 0;
     data.seq_length = 20;
 
@@ -133,7 +137,7 @@ int align_usage() {
     fprintf(stderr, "\n");
     fprintf(stderr, "Note:\n");
     fprintf(stderr, "You can specify a list of ids, OR specify a range of CRISPRs. ");
-    fprintf(stderr, "For example:\n");
+    fprintf(stderr, "For example:\n\n");
     fprintf(stderr, "./find_off_targets align -s 43275 -n 1000\n");
     fprintf(stderr, "  This will calculate off targets for 1000 crisprs,\n");
     fprintf(stderr, "  the ids of which will be 43275-44725\n");

@@ -16,4 +16,4 @@ find_off_targets.o: find_off_targets.cpp
 	$(CC) $(CXXFLAGS) find_off_targets.cpp
 
 clean:
-	rm -f *o find_off_targets
+	rm -f *.o find_off_targets

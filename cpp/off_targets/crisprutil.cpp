@@ -79,6 +79,7 @@ void CrisprUtil::load_binary(const string & filename) {
              << " (" << crispr_data.species << ")" << "\n"
              << "File has " << crispr_data.num_seqs << " sequences" << "\n"
              << "Sequence length is " << crispr_data.seq_length << "\n"
+             << "Offset is " << crispr_data.offset << "\n"
              << "Species id is " << int(crispr_data.species_id) << endl;
 
         uint64_t memory_required = crispr_data.num_seqs * sizeof(uint64_t);
@@ -104,6 +105,7 @@ void CrisprUtil::load_binary(const string & filename) {
 
         //allocate heap memory as its too big for stack
         //store pointer in the class variable
+        uint64_t total_error = 0;
         crisprs = new uint64_t [crispr_data.num_seqs+1];
         crisprs[0] = 0; //we don't use 0 so that all ids match the db ids
         for ( uint64_t i = 1; i <= crispr_data.num_seqs; i++ ) {
@@ -112,11 +114,14 @@ void CrisprUtil::load_binary(const string & filename) {
             }
             //load each 'integer'
             text.read( (char *) &crisprs[i], sizeof(uint64_t) );
+
+            if ( crisprs[i] == ERROR_STR ) total_error++;
         }
 
         t = clock() - t;
 
         cerr << "Loaded " << crispr_data.num_seqs << " sequences" << endl;
+        cerr << "Skipped " << total_error << " sequences" << endl;
 
         text.close();
 
@@ -141,14 +146,6 @@ void CrisprUtil::text_to_binary(const vector<string> & infiles, const string & o
     size_t offset = sizeof(endian_test) + sizeof(VERSION);
 
     cerr << "Writing metadata\n";
-
-    //this should really be passed to this method, and we add the last fields
-    // metadata_t data;
-    // strcpy(data.assembly, "GRCh37");
-    // strcpy(data.species, "Human");
-    // data.species_id = 1;
-    // data.num_seqs = 0;
-    // data.seq_length = 20;
 
     //leave space at the beginning for the number of sequences and the sequence length
     out.seekp( offset + sizeof(*data), ios::beg );
@@ -188,10 +185,11 @@ void CrisprUtil::text_to_binary(const vector<string> & infiles, const string & o
                     uint64_t bits = util::string_to_bits( cmap, seq, pam_right );
                     out.write( (char *) &bits, sizeof(bits) );
 
-                    //we use a string of all A as an error string
-                    //which is fine for now as crisprs need CC/GG.
-                    if ( bits == 0 )
+                    //we use a string of all 1s as an error string
+                    if ( bits == ERROR_STR ) {
                         total_skipped++;
+                        //cerr << "Skipped:" << data->num_seqs << "\n";
+                    }
 
                     //keep track of how many we have so we can write it to the file
                     if ( ++data->num_seqs % 50000000 == 0 ) { 
@@ -223,7 +221,7 @@ void CrisprUtil::find_off_targets(vector<uint64_t> ids) {
 
     for ( auto i = ids.begin(); i < ids.end(); i++ ) {
         crispr_t crispr;
-        crispr.id = *i;
+        crispr.id = *i - crispr_data.offset; //subtract offset to get the right number
         crispr.seq = crisprs[crispr.id];
         crispr.rev_seq = util::revcom(crisprs[crispr.id], crispr_data.seq_length);
 
@@ -276,6 +274,8 @@ void CrisprUtil::_find_off_targets(vector<crispr_t> queries) {
 
         //iterate over every crispr checking for of targets
         for ( uint64_t j = 1; j <= crispr_data.num_seqs; j++ ) {
+            //skip any sequences that are all A (i.e 0)
+            if ( crisprs[j] == ERROR_STR ) continue;
             //xor the two bit strings
             //try forward first
             uint64_t match = queries[i].seq ^ crisprs[j];         
@@ -302,7 +302,7 @@ void CrisprUtil::_find_off_targets(vector<crispr_t> queries) {
                 summary[mm]++;
 
                 if ( ++total_matches < max_offs ) {
-                    off_targets.push_back( j );
+                    off_targets.push_back( j + crispr_data.offset );
                 }
             }
         }
@@ -311,14 +311,14 @@ void CrisprUtil::_find_off_targets(vector<crispr_t> queries) {
 
         //output is:
         //crispr_id,species_id,off_targets,off_target_summary
-        cout << queries[i].id << "," << int(crispr_data.species_id) << ",";
+        cout << (queries[i].id+crispr_data.offset) << "\t" << int(crispr_data.species_id) << "\t";
 
         //print off targets
         if ( total_matches < max_offs ) {
-            cout << util::array_to_string(off_targets.begin(), off_targets.end(), 0) << ",";
+            cout << util::array_to_string(off_targets.begin(), off_targets.end(), 0) << "\t";
         }
         else {
-            cout << "{},";
+            cout << "\\N\t"; //standard NULL is a \N
         }
 
         cout << util::array_to_string(summary.begin(), summary.end(), 1) << "\n";

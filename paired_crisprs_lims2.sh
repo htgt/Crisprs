@@ -83,11 +83,11 @@ cd "$BASE_DIR"
 #write the genome and exons and stuff so we know what was run after the fact
 echo -e "Gene name is ${FILESTEM}\nGenome used is ${GENOME}\nExons supplied:$@" > info.txt
 
-#export LIMS2_REST_CLIENT_CONFIG=/nfs/team87/farm3_lims2_vms/conf/lims2-live-rest-client.conf
+export LIMS2_REST_CLIENT_CONFIG=/nfs/team87/farm3_lims2_vms/conf/lims2-live-rest-client.conf
 
-#PATH=/software/perl-5.16.2/bin:$PATH
+PATH=/software/perl-5.16.2/bin:$PATH
 
-#PERL5LIB=/nfs/users/nfs_a/ah19/lib/perl5/x86_64-linux-thread-multi:/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5:/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/work/WGE/lib:/software/perl-5.16.2/lib/5.16.2/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/lib/perl5:/software/pubseq/PerlModules/BioPerl/1_6_920:$PERL5LIB
+PERL5LIB=/nfs/users/nfs_a/ah19/lib/perl5/x86_64-linux-thread-multi:/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5:/nfs/team87/farm3_lims2_vms/software/perl/lib/perl5/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/work/WGE/lib:/software/perl-5.16.2/lib/5.16.2/x86_64-linux-thread-multi:/nfs/users/nfs_a/ah19/lib/perl5:/software/pubseq/PerlModules/BioPerl/1_6_920:$PERL5LIB
 
 #remove any brave new world crap, temporary until i have a new bashrc
 PERL5LIB=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } split ":", $ENV{PERL5LIB};')
@@ -99,7 +99,7 @@ PATH=$(perl -we 'print join ":", grep { $_ !~ /brave_new_world|perl-5\.8\.9/ } s
 #
 echo "Generating paired crisprs"
 #perl ${SCRIPT_PATH}/find_paired_crisprs.pl "$@" | perl -MBio::Perl=revcom -we 'my $i = 1; my $current_exon; while( my $line = <> ) { next if $line =~ /^Exon/; chomp $line; my ($exon_id, $first, $spacer, $spacer_len, $second) = split ",", $line; if ( ! defined $current_exon || $current_exon ne $exon_id ) { $i = 1; $current_exon = $exon_id; } print "@" . $exon_id . "_" . $i . "A\n" . revcom($first)->seq . "\n"; print "@" . $exon_id . "_" . $i . "B\n" . $second . "\n"; $i++; }' > ${FILESTEM}_crisprs.fq || die "find_paired_crisprs.pl failed!"
-perl ${SCRIPT_PATH}/find_paired_crisprs.pl --species "${SPECIES}" --exon-ids "$@" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --pair-yaml-file "pairs.yaml" || die "find_paired_crisprs.pl failed!"
+perl ${SCRIPT_PATH}/find_paired_crisprs.pl --species "${SPECIES}" --regions "$@" --fq-file "crisprs.fq" --crispr-yaml-file "crisprs.yaml" --pair-yaml-file "pairs.yaml" || die "find_paired_crisprs.pl failed!"
 
 echo 'Aligning and outputting to bed file'
 /software/solexa/bin/bwa samse -n 100000000 "${GENOME}" <(/software/solexa/bin/bwa aln -n 6 -o 0 -l 21 -k 5 -N -m 1000000000 "${GENOME}" crisprs.fq) crisprs.fq | /software/solexa/pkg/bwa/current/xa2multi.pl | /software/hpag/samtools/0.1.19/bin/samtools view -bS - | /software/hpag/samtools/0.1.19/bin/samtools sort - "${FILESTEM}.sorted" || die "aligning failed!"
@@ -155,7 +155,7 @@ perl ${SCRIPT_PATH}/persist_crisprs.pl --species "${SPECIES}" --assembly "${ASSE
 
 perl ${SCRIPT_PATH}/persist_pairs.pl --species "${SPECIES}" --crispr-yaml "crisprs.yaml" --pair-yaml "pairs.yaml" --commit || die "Pairs persist step failed"
 
-cd ..
-rm -rf "$BASE_DIR"
+#cd ..
+#rm -rf "$BASE_DIR"
 
 echo "Completed successfully."

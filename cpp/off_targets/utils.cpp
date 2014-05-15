@@ -34,14 +34,19 @@ namespace util {
  */
     void print_binary(uint64_t data) {
         std::bitset<64> a (data);
-        std::cerr << data << "\n";
+        std::cerr << a << "\n";
     }
 
 
     std::string bits_to_string(uint64_t text, int size) {
         //have to & 0x3 to turn off all bits but what we actually want.
-        std::string s (size, ' '); //make an empty string of the right size
+        std::string s ( size, ' ' ); //make an empty string of the right size
         int shift = 2 * ( size - 1 ); //there are twice as many bits as there are characters
+
+        //fill with N if its an error string (all bits set to 1)
+        if ( text == ERROR_STR ) {
+            s.assign( size, 'N' );
+        }
 
         //extract each character from the text
         for ( int i = 0; i < size; i++, shift -= 2 ) {
@@ -68,8 +73,7 @@ namespace util {
             uint8_t const c = seq[j]; //get char
 
             if ( cmap[c] == 4 ) {
-                //cerr << "Skipping N: " << seq << "\n";
-                bits = 0; //set to all 0s
+                bits = ERROR_STR; //set to all 1s
                 break;
             }
             else {

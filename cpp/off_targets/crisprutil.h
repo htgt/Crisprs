@@ -3,7 +3,7 @@
 
 #define MAX_CHAR_SIZE 30
 
-const uint32_t VERSION = 2;
+const uint32_t VERSION = 3;
 
 #include <string>
 #include <vector>
@@ -12,6 +12,7 @@ const uint32_t VERSION = 2;
 typedef struct {
     uint64_t num_seqs;
     uint64_t seq_length;
+    uint64_t offset; //so we can give real mouse db ids
     uint8_t species_id;
     char species[MAX_CHAR_SIZE]; //use fixed char arrays so we don't have to store size
     char assembly[MAX_CHAR_SIZE];
@@ -30,12 +31,12 @@ class CrisprUtil {
         metadata_t crispr_data;
         unsigned int max_offs;
         static const unsigned int max_mismatches = 4; //make this non static
-        uint8_t cmap[256];
         void _populate_cmap();
         void _find_off_targets(std::vector<crispr_t> queries);
     public:
         CrisprUtil();
         ~CrisprUtil() { if ( crispr_data.num_seqs > 0 ) delete[] crisprs; }
+        uint8_t cmap[256];
         void load_binary(const std::string & outfile);
         std::string get_crispr(uint64_t id);
         void find_off_targets(std::vector<uint64_t> ids);
