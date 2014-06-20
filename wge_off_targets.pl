@@ -25,8 +25,8 @@ die "Usage: run_batch_crisprs.pl <species> <ids.txt>" unless @ARGV >= 2;
 my $species = ucfirst( lc shift );
 
 my %INDEX_FILES = (
-    Mouse => '/lustre/scratch109/sanger/ah19/GRCm38_index.bin',
-    Human => '/lustre/scratch110/sanger/ah19/crisprs_human.bin',  
+    Mouse => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCm38_index.bin',
+    Human => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCh37_index.bin',
 );
 
 die "Invalid species '$species'" unless exists $INDEX_FILES{$species};
@@ -40,6 +40,7 @@ my $log_dir = dir( "/lustre/scratch109/sanger/ah19/crispr_logs/" );
 
 
 my $num_passed = 0;
+my $num_batches = 0;
 
 {
     my @batch; #local
@@ -78,6 +79,8 @@ my $num_passed = 0;
 sub run_batch {
     my @batch = @_;
 
+    DEBUG "Running batch " . ++$num_batches;
+
     #use uuids because i'm lazy
     my $id = create_uuid_as_string();
 
@@ -86,9 +89,14 @@ sub run_batch {
 
     DEBUG "Working directory is $dir";
 
-    #dump the ids into a text file
+    #dump @args so we can get useful data from the run dir
     {
-        my $fh = $dir->file( "ids.txt" )->openw();
+        my $fh = $dir->file( "info.txt" )->openw();
+        print $fh "File: $ARGV\nSpecies: $species\nBatch: $num_batches\nBatch: $batch_size\n";
+        close $fh;
+
+        #dump the ids into a text file
+        $fh = $dir->file( "ids.txt" )->openw();
         print $fh join "\n", @batch;
     }
 

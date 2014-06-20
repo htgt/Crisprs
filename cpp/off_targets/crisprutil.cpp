@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <ctime>
 #include <climits>
+#include <map>
 
 #include "utils.h"
 #include "crisprutil.h"
@@ -39,7 +40,12 @@ void CrisprUtil::_populate_cmap() {
     cmap['t'] = cmap['T'] = 3; //11
 }
 
+//return a crispr sequence string
 string CrisprUtil::get_crispr(uint64_t id) {
+    return util::bits_to_string( get_crispr_int(id), crispr_data.seq_length );
+}
+
+uint64_t CrisprUtil::get_crispr_int(uint64_t id) {
     //make sure load_binary has been called
     if ( crispr_data.num_seqs == 0 )
         throw runtime_error( "CRISPRs must be loaded before calling get_crispr" );
@@ -47,13 +53,19 @@ string CrisprUtil::get_crispr(uint64_t id) {
     if ( id >= crispr_data.num_seqs )
         throw runtime_error( "Index out of range" );
 
-    return util::bits_to_string( crisprs[id], crispr_data.seq_length );
+    return crisprs[id];
 }
 
-void CrisprUtil::load_binary(const string & filename) {
-    cerr << "Loading binary data from:\n" << filename << "\n";
-    ifstream text ( filename );
+uint64_t CrisprUtil::num_seqs() {
+    return crispr_data.num_seqs;
+}
 
+uint64_t CrisprUtil::seq_length() {
+    return crispr_data.seq_length;
+}
+
+//load and verify metadata from ifstream (will adjust ifstream position)
+void CrisprUtil::load_metadata(ifstream & text) {
     if ( text.is_open() ) {
         //make sure that the binary file has the same endianness as our hardware
         uint8_t endian_test;
@@ -75,7 +87,7 @@ void CrisprUtil::load_binary(const string & filename) {
         //load the metadata
         text.read( (char *) &crispr_data, sizeof(crispr_data) );
 
-        cerr << "Loading CRISPRs for " << crispr_data.assembly 
+        cerr << "Assembly is " << crispr_data.assembly 
              << " (" << crispr_data.species << ")" << "\n"
              << "File has " << crispr_data.num_seqs << " sequences" << "\n"
              << "Sequence length is " << crispr_data.seq_length << "\n"
@@ -89,6 +101,80 @@ void CrisprUtil::load_binary(const string & filename) {
         if ( memory_required > 3221225472 ) {
             throw runtime_error("More than 3gb of memory required, aborting.");
         }
+    }
+    else {
+        cerr << "ifstream passed to load_metadata is not open" << endl;
+        throw runtime_error("Failed to load metadata");
+    }
+}
+
+//could have the option to not care about the pam site by doing an & with pam_off
+void CrisprUtil::search_by_seq(const string & filename, string seq, short pam_right) {
+    cerr << "Loading binary data from:\n" << filename << "\n";
+    ifstream text ( filename );
+
+    if ( text.is_open() ) {
+        load_metadata( text );
+
+        //create a crispr_t object
+        //later this method should receive a vector of crispr_t objects
+        if ( seq.size() != crispr_data.seq_length )
+            throw runtime_error( "Sequence size must equal crispr data size" );
+
+        crispr_t query;
+        query.id = 0;
+        query.seq = util::string_to_bits( cmap, seq, pam_right );
+        query.rev_seq = util::revcom( query.seq, crispr_data.seq_length );
+
+        clock_t t = clock();
+
+        uint64_t total_error = 0, total = 0;
+        uint64_t crispr_temp;
+
+        //scan through the file and check every sequence against ours
+        for ( uint64_t i = 1; i <= crispr_data.num_seqs; i++ ) {
+            if ( i % 50000000 == 0 ) {
+                cerr << "Processed " << i << " sequences" << endl;
+            }
+            //load each 'integer'
+            text.read( (char *) &crispr_temp, sizeof(uint64_t) );
+
+            if ( crispr_temp == ERROR_STR ) {
+                total_error++;
+            }
+            else {
+                //for ( auto j = 0; j < queries.size(); j++ ) {
+                    //if ( queries[j].seq == crispr_temp || queries[j].rev_seq == crispr_temp ) {
+                    if ( query.seq == crispr_temp || query.rev_seq == crispr_temp ) {
+                        fprintf( stderr, "Found match at idx: %lu\n", i );
+                        total++;
+                    }
+                //}
+            }
+        }
+
+        t = clock() - t;
+
+        cerr << "Found " << total << " exact matches" << endl;
+        cerr << "Checked against " << crispr_data.num_seqs << " sequences" << endl;
+        cerr << "Skipped " << total_error << " sequences" << endl;
+
+        text.close();
+
+        fprintf( stderr, "Scanning took %f seconds\n", ((float)t)/CLOCKS_PER_SEC );
+    }
+    else {
+        cerr << "Error opening file" << filename << endl;
+        throw runtime_error("Failed to open input file");
+    }
+}
+
+void CrisprUtil::load_binary(const string & filename) {
+    cerr << "Loading binary data from:\n" << filename << "\n";
+    ifstream text ( filename );
+
+    if ( text.is_open() ) {
+        load_metadata( text );
 
         clock_t t = clock();
 
@@ -126,6 +212,61 @@ void CrisprUtil::load_binary(const string & filename) {
         text.close();
 
         fprintf( stderr, "Loading took %f seconds\n", ((float)t)/CLOCKS_PER_SEC );
+    }
+    else {
+        cerr << "Error opening file" << filename << endl;
+        throw runtime_error("Failed to open input file");
+    }
+}
+
+//method for checkign for duplicate crisprs
+//should be deleted at some point
+void CrisprUtil::analyse_binary(const string & filename) {
+    cerr << "Loading binary data from:\n" << filename << "\n";
+    ifstream text ( filename );
+
+    if ( text.is_open() ) {
+        map<uint64_t, int> ids;
+        
+        load_metadata( text );
+
+        clock_t t = clock();
+
+        //allocate heap memory as its too big for stack
+        //store pointer in the class variable
+        uint64_t total_error = 0;
+
+        uint64_t var;
+        for ( uint64_t i = 1; i <= crispr_data.num_seqs; i++ ) {
+            if ( i % 50000000 == 0 ) {
+                cerr << "Loaded " << i << " sequences" << endl;
+                cerr << "Size:" << ids.size() << endl;
+            }
+            //load each 'integer'
+            text.read( (char *) &var, sizeof(uint64_t) );
+
+            //increment our counter
+            ids[var]++;
+
+            if ( var == ERROR_STR ) total_error++;
+        }
+
+        t = clock() - t;
+
+        cerr << "Loaded " << crispr_data.num_seqs << " sequences" << endl;
+        cerr << "Skipped " << total_error << " sequences" << endl;
+
+        text.close();
+
+        fprintf( stderr, "Loading took %f seconds\n", ((float)t)/CLOCKS_PER_SEC );
+
+        for ( auto it = ids.begin(); it != ids.end(); ++it ) {
+            if ( it->second > 10 )
+                continue;
+
+            cout << util::bits_to_string( it->first, crispr_data.seq_length )
+                 << " " << it->second;
+        }
     }
     else {
         cerr << "Error opening file" << filename << endl;
@@ -222,6 +363,11 @@ void CrisprUtil::find_off_targets(vector<uint64_t> ids) {
     for ( auto i = ids.begin(); i < ids.end(); i++ ) {
         crispr_t crispr;
         crispr.id = *i - crispr_data.offset; //subtract offset to get the right number
+        if ( crispr.id > crispr_data.num_seqs ) {
+            cerr << crispr.id << " is an invalid id. Wrong species?" << "\n";
+            throw runtime_error("Index out of bounds");
+        }
+
         crispr.seq = crisprs[crispr.id];
         crispr.rev_seq = util::revcom(crisprs[crispr.id], crispr_data.seq_length);
 
@@ -237,7 +383,7 @@ void CrisprUtil::find_off_targets(uint64_t start, uint64_t amount) {
     //create a crispr_t for every requested id
     for ( uint64_t i = 0; i < amount; i++ ) {
         crispr_t crispr;
-        crispr.id = start+i;
+        crispr.id = (start-crispr_data.offset)+i;
         crispr.seq = crisprs[crispr.id];
         crispr.rev_seq = util::revcom( crisprs[crispr.id], crispr_data.seq_length );
 

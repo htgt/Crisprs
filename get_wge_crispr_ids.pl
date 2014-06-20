@@ -13,9 +13,11 @@ use WGE::Model::DB;
 
 BEGIN { Log::Log4perl->easy_init( $DEBUG ) }
 
-die "Usage: get_wge_crispr_ids.pl <exon_ids.txt>" unless @ARGV >= 1;
+die "Usage: get_wge_crispr_ids.pl <species> <exon_ids.txt>" unless @ARGV >= 2;
 
-my $out_dir = dir( "/lustre/scratch110/sanger/ah19/mouse_crispr_ids/" );
+#my $out_dir = dir( "/lustre/scratch109/sanger/ah19/human_flank_crispr_ids/" );
+my $out_dir = dir( "/lustre/scratch109/sanger/ah19/imits_gene_crispr_ids/" );
+#my $out_dir = dir( "/nfs/users/nfs_a/ah19/work/barry/" );
 
 my ( $out_file, $fh );
 my ( $file_num, $num, $limit, $num_exons, $total ) = ( 1, 0, 8000, 0, 0 );
@@ -23,7 +25,7 @@ my ( $file_num, $num, $limit, $num_exons, $total ) = ( 1, 0, 8000, 0, 0 );
 my $model = WGE::Model::DB->new;
 
 #keep a species object so it goes quicker
-my $species = $model->resultset('Species')->find( 1 );
+my $species = $model->resultset('Species')->find( { id => ucfirst( lc shift ) } );
 WARN "Species is " . $species->id;
 
 while ( my $line = <> ) {
@@ -50,15 +52,21 @@ while ( my $line = <> ) {
 
     #get the associated crisprs for this exon
     #species id human with 200 base flanks
-    my @ids = map { $_->id } $model->resultset('Exon')->find( $line )->crisprs( $species, 200 );
+    #only get crisprs without off targets
+    my @ids = map { $_->id }
+                grep { ! $_->off_target_summary }
+                    $model->resultset('Exon')->find( $line )->crisprs( $species, 200 );
     $num_exons++;
 
     #add to counter
     $num += @ids;
 
     #write 1 id per line
-    say $fh join "\n", @ids;
+    say $fh join "\n", @ids if @ids;
 }
+
+#if there arent enough to pass the limit total will be 0
+$total = $num unless $total;
 
 WARN "Found $total crisprs";
 

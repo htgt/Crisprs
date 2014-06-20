@@ -12,6 +12,9 @@ use List::MoreUtils qw( natatime );
 
 use WGE::Model::DB;
 
+#given a folder get all the files with crispr ids in them and set 
+#the crisprs to genic and exonic
+
 BEGIN { Log::Log4perl->easy_init( $DEBUG ) }
 
 die "Usage: run_batch_crisprs.pl" unless @ARGV >= 1;

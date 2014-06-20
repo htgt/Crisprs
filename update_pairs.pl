@@ -37,8 +37,8 @@ my ( $line, $num ) = ( 0, 0 );
 while ( my $data = $csv->getline_hr( $fh ) ) {
     say "Processing line " . ++$line;
 
-    my $crisprs = crisprs_for_region( $data->{chr_name}, $data->{chr_start}, $data->{chr_end} );
-    my $pairs = crispr_pairs_for_region( $crisprs, $data->{chr_start}, $data->{chr_end} );
+    my $crisprs = crisprs_for_region( $data->{chr_name}, $data->{chr_start}-300, $data->{chr_end}+300 );
+    my $pairs = crispr_pairs_for_region( $crisprs, $data->{chr_start}-300, $data->{chr_end}+300 );
 
     say "Found " . scalar( @{ $pairs } ) . " pairs";
 
