@@ -165,13 +165,13 @@ int main(int argc, char * argv[]) {
                         total++;
 
                         //last field is pam_right
-                        println(current, seqname, seq_start, 0);
+                        println(current, seqname, seq_start+1, 0);
                     }
 
                     std::list<char>::iterator end = current.end();
                     if ( *(--end) == 'G' && *(--end) == 'G' ) {
                         total++;
-                        println(current, seqname, seq_start, 1);
+                        println(current, seqname, seq_start+1, 1);
                     }
                 }
             }
