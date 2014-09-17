@@ -112,7 +112,7 @@ int main(int argc, char * argv[]) {
                     seqname = seqname.substr(0, first);
 
                 //strip Chr if its the first 3 characters
-                if ( seqname.find("Chr") == 0 )
+                if ( seqname.find("Chr") == 0 || seqname.find("chr") == 0 )
                     seqname = seqname.substr(3, seqname.size()-1);
 
                 seqpos = 0;
