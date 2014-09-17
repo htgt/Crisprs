@@ -40,7 +40,7 @@
 
 int species_id;
 
-void println(std::list<char> & current, std::string & seqname, int64_t & start, int pam_right) {
+void println(std::list<char> & current, std::string & seqname, int64_t start, int pam_right) {
     std::cout << seqname << "," << start << ","; //chr
     //display seq
     for ( auto it=current.begin(); it != current.end(); ++it ) {
