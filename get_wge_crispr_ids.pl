@@ -16,7 +16,7 @@ BEGIN { Log::Log4perl->easy_init( $DEBUG ) }
 die "Usage: get_wge_crispr_ids.pl <species> <exon_ids.txt>" unless @ARGV >= 2;
 
 #my $out_dir = dir( "/lustre/scratch109/sanger/ah19/human_flank_crispr_ids/" );
-my $out_dir = dir( "/lustre/scratch109/sanger/ah19/imits_gene_crispr_ids/" );
+my $out_dir = dir( "/lustre/scratch109/sanger/ah19/grch38_crispr_ids/" );
 #my $out_dir = dir( "/nfs/users/nfs_a/ah19/work/barry/" );
 
 my ( $out_file, $fh );

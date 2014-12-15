@@ -25,8 +25,10 @@ die "Usage: run_batch_crisprs.pl <species> <ids.txt>" unless @ARGV >= 2;
 my $species = ucfirst( lc shift );
 
 my %INDEX_FILES = (
-    Mouse => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCm38_index.bin',
-    Human => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCh37_index.bin',
+    Mouse  => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCm38_index.bin',
+    Human  => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCh37_index.bin',
+    Grch38 => '/lustre/scratch110/sanger/team87/crispr_indexes/GRCh38_index.bin',
+    Pig    => '/lustre/scratch109/sanger/ah19/crispr_indexes/pig.bin',
 );
 
 die "Invalid species '$species'" unless exists $INDEX_FILES{$species};
@@ -92,7 +94,7 @@ sub run_batch {
     #dump @args so we can get useful data from the run dir
     {
         my $fh = $dir->file( "info.txt" )->openw();
-        print $fh "File: $ARGV\nSpecies: $species\nBatch: $num_batches\nBatch: $batch_size\n";
+        print $fh "File: $ARGV\nSpecies: $species\nBatch: $num_batches\nBatch size: $batch_size\n";
         close $fh;
 
         #dump the ids into a text file
