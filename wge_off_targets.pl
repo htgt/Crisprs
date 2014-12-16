@@ -25,10 +25,10 @@ die "Usage: run_batch_crisprs.pl <species> <ids.txt>" unless @ARGV >= 2;
 my $species = ucfirst( lc shift );
 
 my %INDEX_FILES = (
-    Mouse  => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCm38_index.bin',
-    Human  => '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCh37_index.bin',
-    Grch38 => '/lustre/scratch110/sanger/team87/crispr_indexes/GRCh38_index.bin',
-    Pig    => '/lustre/scratch109/sanger/ah19/crispr_indexes/pig.bin',
+    Mouse  => $ENV{'GRCM38_CRISPR_INDEX'} || '/lustre/scratch110/sanger/ah19/crispr_indexes/GRCm38_index.bin',
+    Human  => $ENV{'GRCH37_CRISPR_INDEX'} || '/lustre/scratch109/sanger/ah19/crispr_indexes/GRCh37_index.bin',
+    Grch38 => $ENV{'GRCH38_CRISPR_INDEX'} || '/lustre/scratch110/sanger/team87/crispr_indexes/GRCh38_index.bin',
+    Pig    => $ENV{'SSCROFA_CRISPR_INDEX'} || '/lustre/scratch109/sanger/ah19/crispr_indexes/pig.bin',
 );
 
 die "Invalid species '$species'" unless exists $INDEX_FILES{$species};
@@ -37,8 +37,8 @@ my $index_file = file( $INDEX_FILES{$species} );
 die "$index_file doesn't exist" unless -f $index_file;
 
 my $batch_size = 1000;
-my $run_dir = dir( "/lustre/scratch110/sanger/ah19/wge_exons/" );
-my $log_dir = dir( "/lustre/scratch109/sanger/ah19/crispr_logs/" );
+my $run_dir = dir( $ENV{'OFF_TARGET_RUN_DIR'} || "/lustre/scratch110/sanger/ah19/wge_exons/" );
+my $log_dir = dir( $ENV{'OFF_TARGET_LOG_DIR'} || "/lustre/scratch110/sanger/ah19/crispr_logs/" );
 
 
 my $num_passed = 0;
@@ -110,7 +110,7 @@ sub run_batch {
 
     try {
         my $cmd = join " ", (
-            "/nfs/users/nfs_a/ah19/work/paired_crisprs/cpp/off_targets/find_off_targets",
+            $ENV{'OFF_TARGET_BINARY_PATH'} || "/nfs/users/nfs_a/ah19/work/paired_crisprs/cpp/off_targets/find_off_targets",
             "align",
             "-i", $index_file->stringify,
             @batch,
